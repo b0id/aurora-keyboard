@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aurora-keyboard"
+version = "1.0.0"
+description = "Aurora Touch Keyboard for Plasma 6 Wayland Tablets"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyQt6>=6.5.0",
+    "evdev>=1.6.0"
+]
+
+[project.scripts]
+aurora-keyboard = "aurora_keyboard.main:main"

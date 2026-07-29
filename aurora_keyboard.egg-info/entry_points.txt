@@ -1,0 +1,2 @@
+[console_scripts]
+aurora-keyboard = aurora_keyboard.main:main
