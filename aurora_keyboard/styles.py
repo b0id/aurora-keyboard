@@ -93,15 +93,21 @@ QComboBox {
 
 /* Floating Badge */
 QWidget#floating_badge {
-    background: rgba(30, 41, 59, 0.9);
-    border: 2px solid rgba(56, 189, 248, 0.6);
+    background: rgba(18, 24, 38, 0.95);
+    border: 2px solid #38bdf8;
     border-radius: 28px;
 }
 QPushButton#badge_btn {
     background: transparent;
     border: none;
     color: #38bdf8;
-    font-size: 22px;
+    font-size: 26px;
+    border-radius: 26px;
+    min-height: 52px;
+    max-height: 52px;
+}
+QPushButton#badge_btn:hover {
+    background: rgba(56, 189, 248, 0.2);
 }
 """
 
@@ -145,10 +151,33 @@ QPushButton.modifier-btn {
     color: #c084fc;
     border-color: rgba(192, 132, 252, 0.4);
 }
+QPushButton.modifier-btn:checked {
+    background: rgba(192, 132, 252, 0.6);
+    color: #ffffff;
+}
 
 QPushButton.nav-btn {
     color: #34d399;
     border-color: rgba(52, 211, 153, 0.4);
+}
+
+/* Floating Badge */
+QWidget#floating_badge {
+    background: rgba(10, 10, 18, 0.95);
+    border: 2px solid #f43f5e;
+    border-radius: 28px;
+}
+QPushButton#badge_btn {
+    background: transparent;
+    border: none;
+    color: #f43f5e;
+    font-size: 26px;
+    border-radius: 26px;
+    min-height: 52px;
+    max-height: 52px;
+}
+QPushButton#badge_btn:hover {
+    background: rgba(244, 63, 94, 0.25);
 }
 """
 
@@ -175,6 +204,30 @@ QPushButton:pressed {
     background: #ffffff;
     color: #000000;
 }
+
+QPushButton.modifier-btn:checked {
+    background: #333333;
+    border-color: #666666;
+}
+
+/* Floating Badge */
+QWidget#floating_badge {
+    background: #121212;
+    border: 2px solid #ffffff;
+    border-radius: 28px;
+}
+QPushButton#badge_btn {
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    font-size: 26px;
+    border-radius: 26px;
+    min-height: 52px;
+    max-height: 52px;
+}
+QPushButton#badge_btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
 """
 
 LIGHT_VELVET = """
@@ -200,6 +253,30 @@ QPushButton:hover {
 QPushButton:pressed {
     background: #0284c7;
     color: #ffffff;
+}
+
+QPushButton.modifier-btn:checked {
+    background: #0284c7;
+    color: #ffffff;
+}
+
+/* Floating Badge */
+QWidget#floating_badge {
+    background: #ffffff;
+    border: 2px solid #0284c7;
+    border-radius: 28px;
+}
+QPushButton#badge_btn {
+    background: transparent;
+    border: none;
+    color: #0284c7;
+    font-size: 26px;
+    border-radius: 26px;
+    min-height: 52px;
+    max-height: 52px;
+}
+QPushButton#badge_btn:hover {
+    background: rgba(2, 132, 199, 0.15);
 }
 """
 

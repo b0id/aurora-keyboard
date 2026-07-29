@@ -65,6 +65,7 @@ class FloatingBadge(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setFixedSize(56, 56)
+        self.setToolTip("Open Aurora Touch Keyboard")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -72,6 +73,7 @@ class FloatingBadge(QWidget):
         self.btn = QPushButton("⌨", self)
         self.btn.setObjectName("badge_btn")
         self.btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.btn.clicked.connect(self.on_click)
         layout.addWidget(self.btn)
 
@@ -155,10 +157,10 @@ class AuroraKeyboardWindow(QWidget):
 
         # Quick Actions
         actions = [
-            ("All", lambda: self.engine.send_combo(["LEFTCTRL"], "A")),
-            ("Copy", lambda: self.engine.send_combo(["LEFTCTRL"], "C")),
-            ("Paste", lambda: self.engine.send_combo(["LEFTCTRL"], "V")),
-            ("Undo", lambda: self.engine.send_combo(["LEFTCTRL"], "Z")),
+            ("All", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "a")),
+            ("Copy", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "c")),
+            ("Paste", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "v")),
+            ("Undo", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "z")),
             ("Esc", lambda: self.engine.send_keycode(self.engine.get_keycode("ESC"))),
             ("Tab", lambda: self.engine.send_keycode(self.engine.get_keycode("TAB"))),
         ]
@@ -287,33 +289,48 @@ class AuroraKeyboardWindow(QWidget):
                 
                 if key_info.get("type") in ["shift", "caps", "toggle_modifier"]:
                     btn.setCheckable(True)
+                    if key_info.get("type") == "shift":
+                        btn.setChecked(self.shift_active)
+                    elif key_info.get("type") == "caps":
+                        btn.setChecked(self.caps_active)
+                    elif key_info.get("type") == "toggle_modifier":
+                        btn.setChecked(key_info.get("mod") in self.active_modifiers)
 
                 row_layout.addWidget(btn, int(span * 10))
                 self.key_buttons.append(btn)
 
             self.keys_layout.addWidget(row_widget)
 
+    def get_active_modifiers(self) -> list:
+        """Return list of active modifier keycodes including shift if active."""
+        mods = list(self.active_modifiers)
+        if self.shift_active and "LEFTSHIFT" not in mods:
+            mods.append("LEFTSHIFT")
+        return mods
+
     def handle_key_click(self, key_info, btn):
         ktype = key_info.get("type")
+        active_mods = self.get_active_modifiers()
 
         if ktype == "char":
             base_char = key_info.get("label", "")
-            char_to_send = key_info.get("shift_label", base_char.upper() if len(base_char) == 1 else base_char) if (self.shift_active or self.caps_active) else base_char
+            shift_char = key_info.get("shift_label", base_char.upper() if len(base_char) == 1 else base_char)
+            char_to_send = shift_char if (self.shift_active or self.caps_active) else base_char
 
-            if self.active_modifiers:
-                self.engine.send_combo(list(self.active_modifiers), char_to_send)
+            has_non_shift_mods = any(m != "LEFTSHIFT" for m in active_mods)
+
+            if has_non_shift_mods:
+                self.engine.send_combo(active_mods, base_char)
                 self.clear_modifiers()
             else:
                 self.engine.type_text(char_to_send)
-
-            if self.shift_active and not self.caps_active:
-                self.shift_active = False
-                self.update_key_labels()
+                if self.shift_active and not self.caps_active:
+                    self.clear_modifiers()
 
         elif ktype == "key":
             keycode_str = key_info.get("keycode")
-            if self.active_modifiers:
-                self.engine.send_combo(list(self.active_modifiers), keycode_str)
+            if active_mods:
+                self.engine.send_combo(active_mods, keycode_str)
                 self.clear_modifiers()
             else:
                 code = self.engine.get_keycode(keycode_str)
@@ -353,9 +370,11 @@ class AuroraKeyboardWindow(QWidget):
 
     def clear_modifiers(self):
         self.active_modifiers.clear()
+        self.shift_active = False
+        self.update_key_labels()
         for btn in self.key_buttons:
             info = getattr(btn, 'key_info', None)
-            if info and info.get("type") == "toggle_modifier":
+            if info and info.get("type") in ["toggle_modifier", "shift"]:
                 btn.setChecked(False)
 
     def change_layout(self, layout_name):
@@ -369,6 +388,16 @@ class AuroraKeyboardWindow(QWidget):
         self.setStyleSheet(css)
         self.badge.setStyleSheet(css)
 
+    def position_badge(self):
+        screen = QApplication.primaryScreen()
+        if screen:
+            geom = screen.availableGeometry()
+            bw = self.badge.width()
+            bh = self.badge.height()
+            x = geom.x() + geom.width() - bw - 24
+            y = geom.y() + geom.height() - bh - 24
+            self.badge.move(x, y)
+
     def position_bottom(self):
         screen = QApplication.primaryScreen()
         if screen:
@@ -378,12 +407,13 @@ class AuroraKeyboardWindow(QWidget):
             x = geom.x() + int((geom.width() - width) / 2)
             y = geom.y() + geom.height() - height - 10
             self.setGeometry(x, y, width, height)
-
-            self.badge.move(geom.x() + geom.width() - 80, geom.y() + geom.height() - 140)
+            self.position_badge()
 
     def hide_to_badge(self):
         self.hide()
+        self.position_badge()
         self.badge.show()
+        self.position_badge()
 
     def show_keyboard(self):
         self.show()

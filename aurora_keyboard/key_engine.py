@@ -110,17 +110,25 @@ class KeyEngine:
             return
 
         mod_codes = []
+        has_shift_in_mods = False
         for m in modifiers:
-            code = self.get_keycode(m)
+            code = self.get_keycode(m) if isinstance(m, str) else m
             if code:
                 mod_codes.append(code)
+                if code in (e.KEY_LEFTSHIFT, e.KEY_RIGHTSHIFT):
+                    has_shift_in_mods = True
 
         target_code = None
         target_shift = False
-        if len(key_target) == 1 and key_target in CHAR_MAP:
+        if isinstance(key_target, str) and len(key_target) == 1 and key_target in CHAR_MAP:
             target_code, target_shift = CHAR_MAP[key_target]
-        else:
+        elif isinstance(key_target, str):
             target_code = self.get_keycode(key_target)
+        else:
+            target_code = key_target
+
+        if has_shift_in_mods:
+            target_shift = False
 
         # Press modifiers down
         for mc in mod_codes:
