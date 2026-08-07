@@ -189,7 +189,7 @@ We welcome contributions from developers, designers, and tablet enthusiasts!
 
 ---
 
-## 📜 License & Credits
+## 📜 License & Copyleft Protection
 
-* **Aurora Keyboard Core**: GPLv3 / MIT Open Source.
+* **Aurora Keyboard Core**: Licensed under the **GNU General Public License v3.0 (GPL-3.0-or-later)**. Strong copyleft guarantees that any derivative works, forks, and commercial distributions must remain 100% free and open source.
 * **Neural Gesture Models**: Powered by [FUTO Swipe](https://github.com/futo-org) under the FUTO Model Weights License 1.0.
