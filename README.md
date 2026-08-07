@@ -9,6 +9,12 @@
 
 **The first Wayland-native, glassmorphic floating on-screen keyboard for Linux tablets and handhelds featuring kernel-level `/dev/uinput` hardware typing, continuous terminal chording, and real-time neural swipe-to-type.**
 
+<br/>
+
+<img src="docs/images/aurora_keyboard_demo.png" alt="Aurora Touch Keyboard on KDE Plasma 6 Wayland with Kitty Terminal" width="880" style="border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);"/>
+
+<br/><br/>
+
 [Features](#-why-aurora) • [Portability Matrix](#-portability-matrix) • [Architecture](#-architecture) • [Quickstart](#-quickstart) • [Themes](#-themes--customization) • [Contributing](#-contributing)
 
 </div>
