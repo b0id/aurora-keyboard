@@ -12,9 +12,12 @@ echo "=========================================="
 
 mkdir -p "$BIN_DIR" "$DESKTOP_DIR" "$AUTOSTART_DIR"
 
-# Symlink executable to ~/.local/bin
+# Symlink executables to ~/.local/bin
 ln -sf "$APP_DIR/aurora-keyboard" "$BIN_DIR/aurora-keyboard"
 chmod +x "$APP_DIR/aurora-keyboard"
+
+ln -sf "$APP_DIR/aurora-futo-daemon" "$BIN_DIR/aurora-futo-daemon"
+chmod +x "$APP_DIR/aurora-futo-daemon"
 
 # Create .desktop launcher
 CAT_DESKTOP="$DESKTOP_DIR/aurora-keyboard.desktop"
@@ -28,12 +31,12 @@ Icon=input-keyboard
 Terminal=false
 Type=Application
 Categories=Utility;Accessibility;Qt;KDE;
-Keywords=keyboard;osk;virtual;touch;tablet;
+Keywords=keyboard;osk;virtual;touch;tablet;swipe;
 EOF
 
 chmod +x "$CAT_DESKTOP"
 
-# Optionally create Autostart entry
+# Create Autostart entry
 CAT_AUTOSTART="$AUTOSTART_DIR/aurora-keyboard.desktop"
 cat << EOF > "$CAT_AUTOSTART"
 [Desktop Entry]
@@ -46,7 +49,9 @@ X-KDE-autostart-after=panel
 EOF
 
 echo "✓ Executable linked to: $BIN_DIR/aurora-keyboard"
+echo "✓ Neural Daemon linked to: $BIN_DIR/aurora-futo-daemon"
 echo "✓ Desktop launcher created at: $CAT_DESKTOP"
 echo "✓ Autostart entry created at: $CAT_AUTOSTART (starts minimized as floating touch badge)"
 echo ""
-echo "Installation complete! You can start it now by running: aurora-keyboard"
+echo "Installation complete! Start the keyboard by running: aurora-keyboard"
+echo "Start the background neural daemon by running: aurora-futo-daemon &"

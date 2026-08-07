@@ -13,7 +13,40 @@ QFrame#action_bar {
     background: rgba(255, 255, 255, 0.05);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
+    margin-bottom: 4px;
+}
+
+QFrame#candidate_bar {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 12px;
     margin-bottom: 6px;
+    padding: 2px 6px;
+}
+
+QPushButton.candidate-chip {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 4px 14px;
+    min-height: 28px;
+}
+QPushButton.candidate-chip:hover {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: #38bdf8;
+}
+QPushButton.candidate-chip-top {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.4), rgba(56, 189, 248, 0.4));
+    color: #ffffff;
+    border: 1px solid #38bdf8;
+    font-weight: bold;
+}
+QPushButton.candidate-chip-top:hover {
+    background: linear-gradient(135deg, #2563eb, #38bdf8);
 }
 
 QPushButton {
@@ -94,20 +127,20 @@ QComboBox {
 /* Floating Badge */
 QWidget#floating_badge {
     background: rgba(18, 24, 38, 0.95);
-    border: 2px solid #38bdf8;
-    border-radius: 28px;
+    border: 3px solid #475569;
+    border-radius: 80px;
 }
 QPushButton#badge_btn {
     background: transparent;
     border: none;
-    color: #38bdf8;
-    font-size: 26px;
-    border-radius: 26px;
-    min-height: 52px;
-    max-height: 52px;
+    color: #64748b;
+    font-size: 80px;
+    border-radius: 77px;
+    min-height: 154px;
+    max-height: 154px;
 }
 QPushButton#badge_btn:hover {
-    background: rgba(56, 189, 248, 0.2);
+    background: rgba(71, 85, 105, 0.25);
 }
 """
 
@@ -115,6 +148,45 @@ CYBER_NEON = """
 QWidget#keyboard_root {
     background: rgba(10, 10, 18, 0.94);
     border-top: 2px solid #f43f5e;
+}
+
+QFrame#action_bar {
+    background: rgba(244, 63, 94, 0.08);
+    border-bottom: 1px solid rgba(244, 63, 94, 0.25);
+    border-radius: 12px;
+    margin-bottom: 4px;
+}
+
+QFrame#candidate_bar {
+    background: rgba(20, 10, 25, 0.8);
+    border: 1px solid rgba(244, 63, 94, 0.4);
+    border-radius: 12px;
+    margin-bottom: 6px;
+    padding: 2px 6px;
+}
+
+QPushButton.candidate-chip {
+    background: rgba(244, 63, 94, 0.12);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 4px 14px;
+    min-height: 28px;
+}
+QPushButton.candidate-chip:hover {
+    background: rgba(56, 189, 248, 0.25);
+    border-color: #38bdf8;
+    color: #ffffff;
+}
+QPushButton.candidate-chip-top {
+    background: rgba(244, 63, 94, 0.4);
+    color: #ffffff;
+    border: 1px solid #f43f5e;
+}
+QPushButton.candidate-chip-top:hover {
+    background: #f43f5e;
 }
 
 QPushButton {
@@ -164,17 +236,17 @@ QPushButton.nav-btn {
 /* Floating Badge */
 QWidget#floating_badge {
     background: rgba(10, 10, 18, 0.95);
-    border: 2px solid #f43f5e;
-    border-radius: 28px;
+    border: 3px solid #f43f5e;
+    border-radius: 80px;
 }
 QPushButton#badge_btn {
     background: transparent;
     border: none;
-    color: #f43f5e;
-    font-size: 26px;
-    border-radius: 26px;
-    min-height: 52px;
-    max-height: 52px;
+    color: #fb7185;
+    font-size: 80px;
+    border-radius: 77px;
+    min-height: 154px;
+    max-height: 154px;
 }
 QPushButton#badge_btn:hover {
     background: rgba(244, 63, 94, 0.25);
@@ -185,6 +257,42 @@ OLED_DARK = """
 QWidget#keyboard_root {
     background: #000000;
     border-top: 1px solid #222222;
+}
+
+QFrame#action_bar {
+    background: #0a0a0a;
+    border-bottom: 1px solid #222222;
+    border-radius: 12px;
+    margin-bottom: 4px;
+}
+
+QFrame#candidate_bar {
+    background: #0a0a0a;
+    border: 1px solid #333333;
+    border-radius: 12px;
+    margin-bottom: 6px;
+    padding: 2px 6px;
+}
+
+QPushButton.candidate-chip {
+    background: #181818;
+    color: #cccccc;
+    border: 1px solid #333333;
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 4px 14px;
+    min-height: 28px;
+}
+QPushButton.candidate-chip:hover {
+    background: #252525;
+    border-color: #666666;
+    color: #ffffff;
+}
+QPushButton.candidate-chip-top {
+    background: #2a2a2a;
+    color: #ffffff;
+    border: 1px solid #888888;
 }
 
 QPushButton {
@@ -213,17 +321,17 @@ QPushButton.modifier-btn:checked {
 /* Floating Badge */
 QWidget#floating_badge {
     background: #121212;
-    border: 2px solid #ffffff;
-    border-radius: 28px;
+    border: 3px solid #ffffff;
+    border-radius: 80px;
 }
 QPushButton#badge_btn {
     background: transparent;
     border: none;
     color: #ffffff;
-    font-size: 26px;
-    border-radius: 26px;
-    min-height: 52px;
-    max-height: 52px;
+    font-size: 80px;
+    border-radius: 77px;
+    min-height: 154px;
+    max-height: 154px;
 }
 QPushButton#badge_btn:hover {
     background: rgba(255, 255, 255, 0.2);
@@ -234,6 +342,47 @@ LIGHT_VELVET = """
 QWidget#keyboard_root {
     background: rgba(245, 247, 250, 0.94);
     border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+QFrame#action_bar {
+    background: rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    margin-bottom: 4px;
+}
+
+QFrame#candidate_bar {
+    background: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(2, 132, 199, 0.25);
+    border-radius: 12px;
+    margin-bottom: 6px;
+    padding: 2px 6px;
+}
+
+QPushButton.candidate-chip {
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 4px 14px;
+    min-height: 28px;
+}
+QPushButton.candidate-chip:hover {
+    background: #e2e8f0;
+    border-color: #0284c7;
+    color: #0284c7;
+}
+QPushButton.candidate-chip-top {
+    background: rgba(2, 132, 199, 0.12);
+    color: #0369a1;
+    border: 1px solid #0284c7;
+    font-weight: bold;
+}
+QPushButton.candidate-chip-top:hover {
+    background: #0284c7;
+    color: #ffffff;
 }
 
 QPushButton {
@@ -263,20 +412,20 @@ QPushButton.modifier-btn:checked {
 /* Floating Badge */
 QWidget#floating_badge {
     background: #ffffff;
-    border: 2px solid #0284c7;
-    border-radius: 28px;
+    border: 3px solid #0369a1;
+    border-radius: 80px;
 }
 QPushButton#badge_btn {
     background: transparent;
     border: none;
-    color: #0284c7;
-    font-size: 26px;
-    border-radius: 26px;
-    min-height: 52px;
-    max-height: 52px;
+    color: #0369a1;
+    font-size: 80px;
+    border-radius: 77px;
+    min-height: 154px;
+    max-height: 154px;
 }
 QPushButton#badge_btn:hover {
-    background: rgba(2, 132, 199, 0.15);
+    background: rgba(3, 105, 161, 0.15);
 }
 """
 

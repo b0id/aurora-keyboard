@@ -76,16 +76,16 @@ class KeyEngine:
         if shift:
             self.ui.write(e.EV_KEY, e.KEY_LEFTSHIFT, 1)
             self.ui.syn()
-            time.sleep(0.01)
+            time.sleep(0.02)
 
         self.ui.write(e.EV_KEY, code, 1)
         self.ui.syn()
-        time.sleep(0.01)
+        time.sleep(0.02)
         self.ui.write(e.EV_KEY, code, 0)
         self.ui.syn()
 
         if shift:
-            time.sleep(0.01)
+            time.sleep(0.02)
             self.ui.write(e.EV_KEY, e.KEY_LEFTSHIFT, 0)
             self.ui.syn()
 

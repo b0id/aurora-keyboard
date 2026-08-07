@@ -303,28 +303,14 @@ a udev rule drop-in as part of install.
 
 ## 8. Roadmap
 
-### Swipe-to-type (not implemented — design sketch only)
+### Swipe-to-type (in progress — see SWIPE_SPEC.md)
 
 Gesture-based word input: drag a continuous path across letters instead of
-discrete taps, matched against a dictionary to produce word candidates.
-Sketch of what it would need, given the current architecture:
-
-- **Path capture** — `mouseMoveEvent`/touch-move handling already exists at
-  the window level (used today for drag-fallback); a swipe mode would need
-  to instead accumulate the sequence of key buttons the pointer passes over
-  during a single press-drag-release gesture on the letter layout.
-- **Dictionary** — a bundled word list (a trie is the standard structure for
-  this) to constrain candidates to real words.
-- **Scoring** — a path-to-word matching algorithm (classically, something in
-  the family of the SHARK²/ShapeWriter approach: compare the drawn path's
-  shape against each candidate word's "ideal path" through the key
-  centers, ranked by shape + location similarity).
-- **Candidate UI** — a small suggestion bar above the key grid (new row in
-  `init_ui()`), populated with top-N scored candidates, tapping one calls
-  `engine.type_text()` with the chosen word plus a trailing space.
-- **Engine integration** — no changes needed in `key_engine.py` itself;
-  swipe output is just a string handed to the existing `type_text()`.
-
-This is a genuinely new feature (word-prediction algorithm + dictionary +
-new gesture-recognition UI mode), not a bug fix — sized as its own follow-up
-project rather than a drop-in patch.
+discrete taps, matched against a dictionary to produce word candidates. This
+moved past the design-sketch stage — gesture detection and a geometric
+(SHARK²-style) decoder are built and live in `keyboard_window.py` /
+`aurora_keyboard/swipe/`, plus a feasibility spike into using FUTO Swipe's
+neural models as a higher-accuracy backend. Full current status, the
+FUTO comparison data, and the forward plan (trail rendering, candidate bar,
+lexicon-constrained FUTO scoring, etc.) live in `SWIPE_SPEC.md` — that file
+is now the source of truth for this feature rather than this section.
