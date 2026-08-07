@@ -119,17 +119,20 @@ sequenceDiagram
 
 ## 📦 Quickstart
 
-### 1. Prerequisites
+### 1. Prerequisites (x86_64 & ARM64)
 * Python 3.9+ with PyQt6 and evdev:
 ```bash
-# Fedora / RHEL / Bazzite / Aurora:
+# Fedora / RHEL / Bazzite / Aurora (x86_64 & aarch64):
 sudo dnf install python3-pyqt6 python3-evdev
 
-# Arch Linux:
+# Arch Linux & Asahi Linux ARM (Apple Silicon M1/M2/M3):
 sudo pacman -S python-pyqt6 python-evdev
 
-# Ubuntu / Debian:
+# Ubuntu / Debian / Raspberry Pi OS (Pi 4 & 5):
 sudo apt install python3-pyqt6 python3-evdev
+
+# Alpine Linux / PostmarketOS (PineTab / PinePhone):
+sudo apk add py3-qt6 py3-evdev
 ```
 
 ### 2. Enable `/dev/uinput` Access (One-Time)
