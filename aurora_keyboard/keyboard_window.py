@@ -6,6 +6,7 @@ glowing gesture trail overlay, and FUTO neural / geometric swipe-to-type candida
 import sys
 import os
 import subprocess
+import json
 import configparser
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -25,6 +26,7 @@ from .swipe import SwipeManager
 KWIN_RULES_PATH = os.path.expanduser("~/.config/kwinrulesrc")
 KWIN_RULE_TITLE_BADGE = "Aurora Touch Keyboard Badge"
 KWIN_RULE_TITLE_MAIN = "Aurora Touch Keyboard Main"
+CONFIG_PATH = os.path.expanduser("~/.config/aurora-keyboard/config.json")
 
 # screen.availableGeometry() does not reliably exclude the Plasma taskbar for a
 # Force-positioned Tool window - measured directly via screenshot pixel sampling
@@ -385,6 +387,8 @@ class AuroraKeyboardWindow(QWidget):
         self.current_theme = "Aurora Glass"
         self.dock_position = "bottom"
         
+        self.load_config()
+
         self.badge = FloatingBadge(self)
         self._drag_pos = None
 
@@ -393,6 +397,10 @@ class AuroraKeyboardWindow(QWidget):
         self._swipe_points = []
         self._swipe_letters = []
         self._swipe_raw = []
+
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self.save_config_and_sync)
 
         self.apply_flags()
         self.init_ui()
@@ -418,10 +426,73 @@ class AuroraKeyboardWindow(QWidget):
         # (e.g. app was relaunched while already in portrait).
         self._sync_kwin_rules_to_screen()
 
+    def load_config(self):
+        self.position_mode = "remember"
+        self.custom_size = None
+        self.custom_pos = None
+        if os.path.exists(CONFIG_PATH):
+            try:
+                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.position_mode = data.get("position_mode", "remember")
+                    self.custom_size = data.get("custom_size", None)
+                    self.custom_pos = data.get("custom_pos", None)
+                    if "theme" in data and data["theme"] in THEMES:
+                        self.current_theme = data["theme"]
+            except Exception as e:
+                print(f"[Config] Error loading: {e}", file=sys.stderr)
+
+    def save_config(self):
+        try:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump({
+                    "position_mode": self.position_mode,
+                    "custom_size": self.custom_size,
+                    "custom_pos": self.custom_pos,
+                    "theme": self.current_theme,
+                    "layout": self.current_layout_name
+                }, f, indent=2)
+        except Exception as e:
+            print(f"[Config] Error saving: {e}", file=sys.stderr)
+
+    def save_config_and_sync(self):
+        self.save_config()
+        self._sync_kwin_rules_to_screen()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, 'trail_overlay'):
             self.trail_overlay.setGeometry(self.rect())
+        self._update_responsive_typography()
+        if getattr(self, 'position_mode', None) == "remember" and self.isVisible():
+            self.custom_size = [self.width(), self.height()]
+            p = self.pos()
+            self.custom_pos = [p.x(), p.y()]
+            self._save_timer.start(500)
+
+    def _update_responsive_typography(self):
+        if not hasattr(self, 'keys_container') or not getattr(self, 'key_buttons', None):
+            return
+        total_h = self.keys_container.height()
+        if total_h > 80:
+            row_h = total_h / 5.0
+            font_px = max(11, min(int(row_h * 0.36), 22))
+            for btn in self.key_buttons:
+                info = getattr(btn, 'key_info', None)
+                if info and info.get("type") == "char":
+                    btn.setStyleSheet(f"font-size: {font_px}px;")
+
+    def on_size_mode_changed(self, text):
+        if "Default" in text:
+            self.position_mode = "default"
+            self.position_bottom()
+        else:
+            self.position_mode = "remember"
+            self.custom_size = [self.width(), self.height()]
+            p = self.pos()
+            self.custom_pos = [p.x(), p.y()]
+        self.save_config_and_sync()
 
     def apply_flags(self):
         self.setWindowFlags(
@@ -468,6 +539,17 @@ class AuroraKeyboardWindow(QWidget):
             bar_layout.addWidget(btn)
 
         bar_layout.addStretch()
+
+        # Size / Position Mode Selector
+        self.size_mode_box = QComboBox()
+        self.size_mode_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.size_mode_box.addItems(["Remember Size", "Default Auto-Dock"])
+        if self.position_mode == "default":
+            self.size_mode_box.setCurrentText("Default Auto-Dock")
+        else:
+            self.size_mode_box.setCurrentText("Remember Size")
+        self.size_mode_box.currentTextChanged.connect(self.on_size_mode_changed)
+        bar_layout.addWidget(self.size_mode_box)
 
         # Dock Toggle Button (Bottom / Top)
         self.dock_btn = QPushButton("⬇ Dock")
@@ -581,7 +663,7 @@ class AuroraKeyboardWindow(QWidget):
                 span = key_info.get("span", 1.0)
                 btn.setSizePolicy(
                     QSizePolicy.Policy.Expanding,
-                    QSizePolicy.Policy.Fixed
+                    QSizePolicy.Policy.Expanding
                 )
                 btn.setMinimumWidth(int(40 * span))
 
@@ -784,13 +866,17 @@ class AuroraKeyboardWindow(QWidget):
         return x, y
 
     def _dock_geometry(self, geom):
-        """Bottom-docked (x, y, width, height) for the main window within an
-        available-screen rect. Shared by position_bottom() and the KWin-rule sync.
-        Height comes from the layout's own sizeHint rather than a guessed constant -
-        the old hardcoded 360/330 was actually wrong (real heights are 409 for
-        QWERTY/NUMPAD, 353 for DEV/TERM), it just didn't matter while the KWin size
-        rule was "Apply once" (see WINDOW_RULES.md); it started visibly shrinking
-        the window once that became "Force" so rotation could re-apply it."""
+        """Derives docked or remembered (x, y, width, height) for the main window
+        within an available-screen rect."""
+        if getattr(self, 'position_mode', None) == "remember" and getattr(self, 'custom_size', None):
+            width, height = self.custom_size
+            if getattr(self, 'custom_pos', None):
+                x, y = self.custom_pos
+            else:
+                x = geom.x() + int((geom.width() - width) / 2)
+                y = geom.y() + geom.height() - height - BOTTOM_CLEARANCE
+            return x, y, width, height
+
         width = int(geom.width() * 0.95)
         height = self.sizeHint().height()
         x = geom.x() + int((geom.width() - width) / 2)
@@ -870,9 +956,15 @@ class AuroraKeyboardWindow(QWidget):
             if main_section:
                 kwrite(main_section, "position", f"{main_x},{main_y}")
                 kwrite(main_section, "size", f"{main_w},{main_h}")
-                # "Apply" (3) only takes effect at initial mapping; "Force" (2)
-                # re-applies live too, which a rotation-driven resize needs.
-                kwrite(main_section, "sizerule", "2")
+                # Deliberately NOT forcing sizerule to "2" (Force) here. That was
+                # tried to make a rotation-driven resize apply live, but a
+                # continuously-reasserted Force size rule turned out to cause the
+                # main window to intermittently steal input focus while typing -
+                # this app's only input method, so that regression outweighs the
+                # convenience. Left at whatever it already is (originally "3",
+                # Apply-once) - position still updates live (positionrule stays
+                # Force, unaffected), but the new size only takes effect at the
+                # next real (re)map: minimize-to-badge-and-restore, or a relaunch.
 
             if badge_section or main_section:
                 subprocess.run(
