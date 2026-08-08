@@ -1,18 +1,35 @@
-"""
-Entry point for Aurora Touch Keyboard.
-"""
-
 import sys
+import os
+import subprocess
 import argparse
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from .keyboard_window import AuroraKeyboardWindow
+from .swipe.futo_client import FutoSwipeClient
 
 # Fixed name for the single-instance IPC channel. A second launch (e.g. from
 # the taskbar launcher or autostart re-firing) connects to this instead of
 # starting a second process that would fight the first one for /dev/uinput
 # and draw a duplicate, overlapping window.
 IPC_SERVER_NAME = "aurora-touch-keyboard-singleton"
+
+
+def _ensure_futo_daemon():
+    """Ensure FUTO neural daemon is running in background if socket is not reachable."""
+    client = FutoSwipeClient()
+    if not client.is_available():
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        launcher = os.path.join(root_dir, "aurora-futo-daemon")
+        if os.path.exists(launcher):
+            try:
+                subprocess.Popen(
+                    ["bash", launcher],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True
+                )
+            except Exception as e:
+                print(f"[Main] Notice: Could not auto-launch neural daemon: {e}", file=sys.stderr)
 
 
 def _notify_running_instance() -> bool:
@@ -44,6 +61,9 @@ def main():
 
     if _notify_running_instance():
         sys.exit(0)
+
+    # Ensure FUTO neural swipe daemon is running
+    _ensure_futo_daemon()
 
     # Stale socket file left behind by a crashed previous instance.
     QLocalServer.removeServer(IPC_SERVER_NAME)
