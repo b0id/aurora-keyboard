@@ -284,8 +284,8 @@ class TouchResizeGrip(QLabel):
             screen = QApplication.primaryScreen()
             max_w = screen.availableGeometry().width() if screen else 1920
             max_h = screen.availableGeometry().height() if screen else 1280
-            new_w = max(500, min(max_w, self._start_size.width() + delta.x()))
-            new_h = max(200, min(max_h - 80, self._start_size.height() + delta.y()))
+            new_w = max(380, min(max_w, self._start_size.width() + delta.x()))
+            new_h = max(160, min(max_h - 80, self._start_size.height() + delta.y()))
             self.parent_window.resize(new_w, new_h)
             event.accept()
 
@@ -551,8 +551,8 @@ class AuroraKeyboardWindow(QWidget):
         
         cur_w = self.width()
         cur_h = self.height()
-        new_w = max(550, min(max_w, int(cur_w * factor)))
-        new_h = max(220, min(max_h - 80, int(cur_h * factor)))
+        new_w = max(380, min(max_w, int(cur_w * factor)))
+        new_h = max(160, min(max_h - 80, int(cur_h * factor)))
         
         self.resize(new_w, new_h)
         if self.position_mode == "remember":
@@ -569,9 +569,15 @@ class AuroraKeyboardWindow(QWidget):
         base_w = int(geom.width() * 0.95)
         base_h = 409
         
-        if "75%" in text:
+        if "50%" in text:
+            target_w = int(base_w * 0.50)
+            target_h = int(base_h * 0.55)
+        elif "65%" in text:
+            target_w = int(base_w * 0.65)
+            target_h = int(base_h * 0.70)
+        elif "75%" in text:
             target_w = int(base_w * 0.75)
-            target_h = int(base_h * 0.75)
+            target_h = int(base_h * 0.80)
         elif "125%" in text:
             target_w = min(geom.width(), int(base_w * 1.25))
             target_h = int(base_h * 1.25)
@@ -606,27 +612,26 @@ class AuroraKeyboardWindow(QWidget):
         self.action_bar = QFrame(self)
         self.action_bar.setObjectName("action_bar")
         bar_layout = QHBoxLayout(self.action_bar)
-        bar_layout.setContentsMargins(8, 4, 8, 4)
-        bar_layout.setSpacing(6)
+        bar_layout.setContentsMargins(6, 2, 6, 2)
+        bar_layout.setSpacing(4)
 
         # Drag Handle Grip Button
-        self.drag_label = DragHandleLabel("❖ Drag Keyboard", self)
+        self.drag_label = DragHandleLabel("❖ Drag", self)
         bar_layout.addWidget(self.drag_label)
 
-        # Quick Actions
+        # Quick Actions (Compact)
         actions = [
             ("All", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "a")),
             ("Copy", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "c")),
             ("Paste", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "v")),
-            ("Undo", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "z")),
             ("Esc", lambda: self.engine.send_keycode(self.engine.get_keycode("ESC"))),
             ("Tab", lambda: self.engine.send_keycode(self.engine.get_keycode("TAB"))),
         ]
         for name, callback in actions:
             btn = QPushButton(name)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setFixedHeight(32)
-            btn.setStyleSheet("padding: 0 8px; font-size: 13px;")
+            btn.setFixedHeight(28)
+            btn.setStyleSheet("padding: 0 4px; font-size: 11px;")
             btn.clicked.connect(callback)
             bar_layout.addWidget(btn)
 
@@ -635,16 +640,16 @@ class AuroraKeyboardWindow(QWidget):
         # Touch Zoom Out Button
         zoom_out_btn = QPushButton("−")
         zoom_out_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        zoom_out_btn.setFixedSize(30, 32)
+        zoom_out_btn.setFixedSize(26, 28)
         zoom_out_btn.setToolTip("Shrink keyboard size (-10%)")
-        zoom_out_btn.setStyleSheet("font-size: 16px; font-weight: bold;")
+        zoom_out_btn.setStyleSheet("font-size: 15px; font-weight: bold;")
         zoom_out_btn.clicked.connect(lambda: self.scale_keyboard(0.90))
         bar_layout.addWidget(zoom_out_btn)
 
-        # Scale Presets
+        # Scale Presets (including 1/4 Tile Mini)
         self.scale_preset_box = QComboBox()
         self.scale_preset_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scale_preset_box.addItems(["75% (Compact)", "100% (Standard)", "125% (Large)"])
+        self.scale_preset_box.addItems(["50% (1/4 Tile)", "65% (Compact)", "100% (Standard)", "125% (Large)"])
         self.scale_preset_box.setCurrentText("100% (Standard)")
         self.scale_preset_box.currentTextChanged.connect(self.on_scale_preset_selected)
         bar_layout.addWidget(self.scale_preset_box)
@@ -652,9 +657,9 @@ class AuroraKeyboardWindow(QWidget):
         # Touch Zoom In Button
         zoom_in_btn = QPushButton("+")
         zoom_in_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        zoom_in_btn.setFixedSize(30, 32)
+        zoom_in_btn.setFixedSize(26, 28)
         zoom_in_btn.setToolTip("Enlarge keyboard size (+10%)")
-        zoom_in_btn.setStyleSheet("font-size: 16px; font-weight: bold;")
+        zoom_in_btn.setStyleSheet("font-size: 15px; font-weight: bold;")
         zoom_in_btn.clicked.connect(lambda: self.scale_keyboard(1.10))
         bar_layout.addWidget(zoom_in_btn)
 
@@ -665,25 +670,25 @@ class AuroraKeyboardWindow(QWidget):
         # Size / Position Mode Selector
         self.size_mode_box = QComboBox()
         self.size_mode_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.size_mode_box.addItems(["Remember Size", "Default Auto-Dock"])
+        self.size_mode_box.addItems(["Remember", "Auto-Dock"])
         if self.position_mode == "default":
-            self.size_mode_box.setCurrentText("Default Auto-Dock")
+            self.size_mode_box.setCurrentText("Auto-Dock")
         else:
-            self.size_mode_box.setCurrentText("Remember Size")
+            self.size_mode_box.setCurrentText("Remember")
         self.size_mode_box.currentTextChanged.connect(self.on_size_mode_changed)
         bar_layout.addWidget(self.size_mode_box)
 
         # Dock Toggle Button (Bottom / Top)
         self.dock_btn = QPushButton("⬇ Dock")
         self.dock_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.dock_btn.setFixedHeight(32)
+        self.dock_btn.setFixedHeight(28)
         self.dock_btn.clicked.connect(self.toggle_dock)
         bar_layout.addWidget(self.dock_btn)
 
         # Layout Selector
         self.layout_box = QComboBox()
         self.layout_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.layout_box.addItems(["QWERTY", "DEV/TERM", "NUMPAD"])
+        self.layout_box.addItems(["QWERTY", "DEV", "NUM"])
         self.layout_box.currentTextChanged.connect(self.change_layout)
         bar_layout.addWidget(self.layout_box)
 
@@ -697,14 +702,14 @@ class AuroraKeyboardWindow(QWidget):
         # Minimize Button
         min_btn = QPushButton("🗕")
         min_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        min_btn.setFixedSize(32, 32)
+        min_btn.setFixedSize(28, 28)
         min_btn.clicked.connect(self.hide_to_badge)
         bar_layout.addWidget(min_btn)
 
         # Close Button
         close_btn = QPushButton("✕")
         close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        close_btn.setFixedSize(32, 32)
+        close_btn.setFixedSize(28, 28)
         close_btn.setObjectName("close_btn")
         close_btn.setStyleSheet("background: rgba(239, 68, 68, 0.4); color: white;")
         close_btn.clicked.connect(QApplication.instance().quit)
@@ -720,7 +725,7 @@ class AuroraKeyboardWindow(QWidget):
         self.keys_container = QWidget()
         self.keys_layout = QVBoxLayout(self.keys_container)
         self.keys_layout.setContentsMargins(0, 0, 0, 0)
-        self.keys_layout.setSpacing(6)
+        self.keys_layout.setSpacing(4)
 
         self.main_layout.addWidget(self.keys_container)
         self.build_keys("QWERTY")
@@ -737,11 +742,11 @@ class AuroraKeyboardWindow(QWidget):
         if self.dock_position == "bottom":
             self.dock_position = "top"
             y = geom.y() + 10
-            self.dock_btn.setText("⬆ Dock Top")
+            self.dock_btn.setText("⬆ Dock")
         else:
             self.dock_position = "bottom"
             y = geom.y() + geom.height() - height - 10
-            self.dock_btn.setText("⬇ Dock Bot")
+            self.dock_btn.setText("⬇ Dock")
         
         self.move(x, y)
 
@@ -753,7 +758,7 @@ class AuroraKeyboardWindow(QWidget):
 
         if layout_name == "QWERTY":
             rows = QWERTY_ROWS
-        elif layout_name == "DEV/TERM":
+        elif layout_name in ["DEV/TERM", "DEV"]:
             rows = DEV_ROWS
         else:
             rows = NUMPAD_ROWS
@@ -764,7 +769,7 @@ class AuroraKeyboardWindow(QWidget):
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
+            row_layout.setSpacing(4)
 
             for key_info in row_data:
                 if key_info.get("type") == "char":
@@ -787,7 +792,7 @@ class AuroraKeyboardWindow(QWidget):
                     QSizePolicy.Policy.Expanding,
                     QSizePolicy.Policy.Expanding
                 )
-                btn.setMinimumWidth(int(40 * span))
+                btn.setMinimumWidth(int(14 * span))
 
                 cls = key_info.get("class", "")
                 if cls:
