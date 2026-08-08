@@ -246,6 +246,55 @@ class DragHandleLabel(QLabel):
             event.accept()
 
 
+class TouchResizeGrip(QLabel):
+    """Touch-friendly corner grip for resizing the keyboard with a finger drag."""
+
+    def __init__(self, parent_window):
+        super().__init__("◢ Resize")
+        self.parent_window = parent_window
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip("Drag with finger to resize keyboard")
+        self.setStyleSheet("""
+            color: #38bdf8;
+            font-size: 13px;
+            font-weight: bold;
+            padding: 4px 10px;
+            background: rgba(56, 189, 248, 0.2);
+            border: 1px solid rgba(56, 189, 248, 0.5);
+            border-radius: 6px;
+        """)
+        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self._start_pos = None
+        self._start_size = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            wh = self.parent_window.windowHandle()
+            if wh and hasattr(wh, 'startSystemResize'):
+                wh.startSystemResize(Qt.Edge.RightEdge | Qt.Edge.BottomEdge)
+                event.accept()
+            else:
+                self._start_pos = event.globalPosition().toPoint()
+                self._start_size = self.parent_window.size()
+                event.accept()
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, '_start_pos', None) is not None and getattr(self, '_start_size', None) is not None:
+            delta = event.globalPosition().toPoint() - self._start_pos
+            screen = QApplication.primaryScreen()
+            max_w = screen.availableGeometry().width() if screen else 1920
+            max_h = screen.availableGeometry().height() if screen else 1280
+            new_w = max(500, min(max_w, self._start_size.width() + delta.x()))
+            new_h = max(200, min(max_h - 80, self._start_size.height() + delta.y()))
+            self.parent_window.resize(new_w, new_h)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._start_pos = None
+        self._start_size = None
+        event.accept()
+
+
 class BadgeButton(QPushButton):
     """Badge's tap target."""
 
@@ -494,6 +543,49 @@ class AuroraKeyboardWindow(QWidget):
             self.custom_pos = [p.x(), p.y()]
         self.save_config_and_sync()
 
+    def scale_keyboard(self, factor: float):
+        screen = QApplication.primaryScreen()
+        geom = screen.availableGeometry() if screen else None
+        max_w = geom.width() if geom else 1920
+        max_h = geom.height() if geom else 1280
+        
+        cur_w = self.width()
+        cur_h = self.height()
+        new_w = max(550, min(max_w, int(cur_w * factor)))
+        new_h = max(220, min(max_h - 80, int(cur_h * factor)))
+        
+        self.resize(new_w, new_h)
+        if self.position_mode == "remember":
+            self.custom_size = [new_w, new_h]
+            p = self.pos()
+            self.custom_pos = [p.x(), p.y()]
+            self.save_config_and_sync()
+
+    def on_scale_preset_selected(self, text: str):
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return
+        geom = screen.availableGeometry()
+        base_w = int(geom.width() * 0.95)
+        base_h = 409
+        
+        if "75%" in text:
+            target_w = int(base_w * 0.75)
+            target_h = int(base_h * 0.75)
+        elif "125%" in text:
+            target_w = min(geom.width(), int(base_w * 1.25))
+            target_h = int(base_h * 1.25)
+        else:
+            target_w = base_w
+            target_h = base_h
+            
+        self.resize(target_w, target_h)
+        if self.position_mode == "remember":
+            self.custom_size = [target_w, target_h]
+            p = self.pos()
+            self.custom_pos = [p.x(), p.y()]
+            self.save_config_and_sync()
+
     def apply_flags(self):
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
@@ -539,6 +631,36 @@ class AuroraKeyboardWindow(QWidget):
             bar_layout.addWidget(btn)
 
         bar_layout.addStretch()
+
+        # Touch Zoom Out Button
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        zoom_out_btn.setFixedSize(30, 32)
+        zoom_out_btn.setToolTip("Shrink keyboard size (-10%)")
+        zoom_out_btn.setStyleSheet("font-size: 16px; font-weight: bold;")
+        zoom_out_btn.clicked.connect(lambda: self.scale_keyboard(0.90))
+        bar_layout.addWidget(zoom_out_btn)
+
+        # Scale Presets
+        self.scale_preset_box = QComboBox()
+        self.scale_preset_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.scale_preset_box.addItems(["75% (Compact)", "100% (Standard)", "125% (Large)"])
+        self.scale_preset_box.setCurrentText("100% (Standard)")
+        self.scale_preset_box.currentTextChanged.connect(self.on_scale_preset_selected)
+        bar_layout.addWidget(self.scale_preset_box)
+
+        # Touch Zoom In Button
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        zoom_in_btn.setFixedSize(30, 32)
+        zoom_in_btn.setToolTip("Enlarge keyboard size (+10%)")
+        zoom_in_btn.setStyleSheet("font-size: 16px; font-weight: bold;")
+        zoom_in_btn.clicked.connect(lambda: self.scale_keyboard(1.10))
+        bar_layout.addWidget(zoom_in_btn)
+
+        # Touch Finger Resize Grip
+        self.resize_grip = TouchResizeGrip(self)
+        bar_layout.addWidget(self.resize_grip)
 
         # Size / Position Mode Selector
         self.size_mode_box = QComboBox()
