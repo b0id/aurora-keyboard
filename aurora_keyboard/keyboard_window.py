@@ -222,13 +222,15 @@ class DragHandleLabel(QLabel):
         self.setStyleSheet("""
             color: #38bdf8;
             font-weight: bold;
-            font-size: 14px;
-            padding: 4px 12px;
+            font-size: 13px;
+            padding: 2px 8px;
             background: rgba(56, 189, 248, 0.2);
             border: 1px solid rgba(56, 189, 248, 0.5);
             border-radius: 6px;
         """)
         self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self._drag_start_global = None
+        self._window_start_pos = None
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -237,13 +239,31 @@ class DragHandleLabel(QLabel):
                 wh.startSystemMove()
                 event.accept()
             else:
-                self.parent_window._drag_pos = event.globalPosition().toPoint() - self.parent_window.frameGeometry().topLeft()
+                self._drag_start_global = event.globalPosition().toPoint()
+                self._window_start_pos = self.parent_window.pos()
                 event.accept()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and getattr(self.parent_window, '_drag_pos', None) is not None:
-            self.parent_window.move(event.globalPosition().toPoint() - self.parent_window._drag_pos)
+        if getattr(self, '_drag_start_global', None) is not None and getattr(self, '_window_start_pos', None) is not None:
+            delta = event.globalPosition().toPoint() - self._drag_start_global
+            new_x = self._window_start_pos.x() + delta.x()
+            new_y = self._window_start_pos.y() + delta.y()
+            screen = QApplication.primaryScreen()
+            if screen:
+                geom = screen.availableGeometry()
+                new_x = max(geom.x() + 10, min(geom.x() + geom.width() - self.parent_window.width() - 10, new_x))
+                new_y = max(geom.y() + 10, min(geom.y() + geom.height() - self.parent_window.height() - BOTTOM_CLEARANCE, new_y))
+            self.parent_window.move(new_x, new_y)
             event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start_global = None
+        self._window_start_pos = None
+        if getattr(self.parent_window, 'position_mode', None) == "remember":
+            p = self.parent_window.pos()
+            self.parent_window.custom_pos = [p.x(), p.y()]
+            self.parent_window.save_config()
+        event.accept()
 
 
 class TouchResizeGrip(QLabel):
@@ -551,15 +571,18 @@ class AuroraKeyboardWindow(QWidget):
         
         cur_w = self.width()
         cur_h = self.height()
-        new_w = max(380, min(max_w, int(cur_w * factor)))
-        new_h = max(160, min(max_h - 80, int(cur_h * factor)))
+        new_w = max(380, min(max_w - 20, int(cur_w * factor)))
+        new_h = max(160, min(max_h - BOTTOM_CLEARANCE - 20, int(cur_h * factor)))
         
-        self.resize(new_w, new_h)
+        cur_pos = self.pos()
+        new_x = max(10, min(max_w - new_w - 10, cur_pos.x()))
+        new_y = max(10, min(max_h - new_h - BOTTOM_CLEARANCE, cur_pos.y()))
+        
+        self.setGeometry(new_x, new_y, new_w, new_h)
         if self.position_mode == "remember":
             self.custom_size = [new_w, new_h]
-            p = self.pos()
-            self.custom_pos = [p.x(), p.y()]
-            self.save_config_and_sync()
+            self.custom_pos = [new_x, new_y]
+            self.save_config()
 
     def on_scale_preset_selected(self, text: str):
         screen = QApplication.primaryScreen()
@@ -579,18 +602,21 @@ class AuroraKeyboardWindow(QWidget):
             target_w = int(base_w * 0.75)
             target_h = int(base_h * 0.80)
         elif "125%" in text:
-            target_w = min(geom.width(), int(base_w * 1.25))
+            target_w = min(geom.width() - 20, int(base_w * 1.25))
             target_h = int(base_h * 1.25)
         else:
             target_w = base_w
             target_h = base_h
             
-        self.resize(target_w, target_h)
+        cur_pos = self.pos()
+        target_x = max(geom.x() + 10, min(geom.x() + geom.width() - target_w - 10, cur_pos.x()))
+        target_y = max(geom.y() + 10, min(geom.y() + geom.height() - target_h - BOTTOM_CLEARANCE, cur_pos.y()))
+
+        self.setGeometry(target_x, target_y, target_w, target_h)
         if self.position_mode == "remember":
             self.custom_size = [target_w, target_h]
-            p = self.pos()
-            self.custom_pos = [p.x(), p.y()]
-            self.save_config_and_sync()
+            self.custom_pos = [target_x, target_y]
+            self.save_config()
 
     def apply_flags(self):
         self.setWindowFlags(
@@ -997,8 +1023,12 @@ class AuroraKeyboardWindow(QWidget):
         within an available-screen rect."""
         if getattr(self, 'position_mode', None) == "remember" and getattr(self, 'custom_size', None):
             width, height = self.custom_size
+            width = max(380, min(geom.width() - 20, width))
+            height = max(160, min(geom.height() - BOTTOM_CLEARANCE - 20, height))
             if getattr(self, 'custom_pos', None):
-                x, y = self.custom_pos
+                raw_x, raw_y = self.custom_pos
+                x = max(geom.x() + 10, min(geom.x() + geom.width() - width - 10, raw_x))
+                y = max(geom.y() + 10, min(geom.y() + geom.height() - height - BOTTOM_CLEARANCE, raw_y))
             else:
                 x = geom.x() + int((geom.width() - width) / 2)
                 y = geom.y() + geom.height() - height - BOTTOM_CLEARANCE
@@ -1082,7 +1112,9 @@ class AuroraKeyboardWindow(QWidget):
                 kwrite(badge_section, "position", f"{badge_x},{badge_y}")
             if main_section:
                 kwrite(main_section, "position", f"{main_x},{main_y}")
+                kwrite(main_section, "positionrule", "3")
                 kwrite(main_section, "size", f"{main_w},{main_h}")
+                kwrite(main_section, "sizerule", "3")
                 # Deliberately NOT forcing sizerule to "2" (Force) here. That was
                 # tried to make a rotation-driven resize apply live, but a
                 # continuously-reasserted Force size rule turned out to cause the
