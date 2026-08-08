@@ -5,6 +5,8 @@ glowing gesture trail overlay, and FUTO neural / geometric swipe-to-type candida
 
 import sys
 import os
+import subprocess
+import configparser
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QComboBox, QLabel, QFrame, QSizePolicy, QGraphicsDropShadowEffect
@@ -16,6 +18,19 @@ from .key_engine import KeyEngine
 from .layouts import QWERTY_ROWS, DEV_ROWS, NUMPAD_ROWS
 from .styles import THEMES
 from .swipe import SwipeManager
+
+# KDE Window Rules store fixed pixel position/size (see WINDOW_RULES.md) - they
+# have no notion of the screen's own dimensions, so a screen rotation or
+# resolution change leaves them stale unless something rewrites them.
+KWIN_RULES_PATH = os.path.expanduser("~/.config/kwinrulesrc")
+KWIN_RULE_TITLE_BADGE = "Aurora Touch Keyboard Badge"
+KWIN_RULE_TITLE_MAIN = "Aurora Touch Keyboard Main"
+
+# screen.availableGeometry() does not reliably exclude the Plasma taskbar for a
+# Force-positioned Tool window - measured directly via screenshot pixel sampling
+# (taskbar top at physical y=1226 of 1280, ~45 logical px tall at this device's
+# 1.2 scale) rather than trusting availableGeometry()'s own panel accounting.
+BOTTOM_CLEARANCE = 55
 
 
 class SwipeTrailOverlay(QWidget):
@@ -274,6 +289,11 @@ class FloatingBadge(QWidget):
         super().__init__()
         self.parent_window = parent_window
         self.setObjectName("floating_badge")
+        # Distinct title so KWin Window Rules can target the badge separately
+        # from the main keyboard window - both share the same app id/class
+        # since they come from the same process, so title is the only thing
+        # that tells them apart for rule matching.
+        self.setWindowTitle("Aurora Touch Keyboard Badge")
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.FramelessWindowHint |
@@ -354,6 +374,7 @@ class AuroraKeyboardWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("keyboard_root")
+        self.setWindowTitle("Aurora Touch Keyboard Main")
         self.engine = KeyEngine()
         
         self.shift_active = False
@@ -383,6 +404,19 @@ class AuroraKeyboardWindow(QWidget):
         self.trail_overlay.show()
 
         self.apply_theme(self.current_theme)
+
+        # Rotation / resolution change handling: KWin rules don't auto-scale,
+        # so re-derive and re-push their geometry whenever the screen changes.
+        self._rotation_timer = QTimer(self)
+        self._rotation_timer.setSingleShot(True)
+        self._rotation_timer.timeout.connect(self._handle_screen_change)
+        self._watch_screen(QApplication.primaryScreen())
+        app = QApplication.instance()
+        if app:
+            app.primaryScreenChanged.connect(self._on_primary_screen_changed)
+        # Also correct any rule geometry left stale from a previous orientation
+        # (e.g. app was relaunched while already in portrait).
+        self._sync_kwin_rules_to_screen()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -740,26 +774,113 @@ class AuroraKeyboardWindow(QWidget):
         if hasattr(self, 'trail_overlay'):
             self.trail_overlay.set_theme(theme_name)
 
+    def _badge_geometry(self, geom):
+        """Bottom-right-corner (x, y) for the badge within an available-screen rect.
+        Shared by position_badge() and the KWin-rule sync so both agree."""
+        bw = self.badge.width()
+        bh = self.badge.height()
+        x = geom.x() + geom.width() - bw - 24
+        y = geom.y() + geom.height() - bh - BOTTOM_CLEARANCE
+        return x, y
+
+    def _dock_geometry(self, geom):
+        """Bottom-docked (x, y, width, height) for the main window within an
+        available-screen rect. Shared by position_bottom() and the KWin-rule sync.
+        Height comes from the layout's own sizeHint rather than a guessed constant -
+        the old hardcoded 360/330 was actually wrong (real heights are 409 for
+        QWERTY/NUMPAD, 353 for DEV/TERM), it just didn't matter while the KWin size
+        rule was "Apply once" (see WINDOW_RULES.md); it started visibly shrinking
+        the window once that became "Force" so rotation could re-apply it."""
+        width = int(geom.width() * 0.95)
+        height = self.sizeHint().height()
+        x = geom.x() + int((geom.width() - width) / 2)
+        y = geom.y() + geom.height() - height - BOTTOM_CLEARANCE
+        return x, y, width, height
+
     def position_badge(self):
         screen = QApplication.primaryScreen()
         if screen:
-            geom = screen.availableGeometry()
-            bw = self.badge.width()
-            bh = self.badge.height()
-            x = geom.x() + geom.width() - bw - 24
-            y = geom.y() + geom.height() - bh - 24
+            x, y = self._badge_geometry(screen.availableGeometry())
             self.badge.move(x, y)
 
     def position_bottom(self):
         screen = QApplication.primaryScreen()
         if screen:
-            geom = screen.availableGeometry()
-            width = int(geom.width() * 0.95)
-            height = 360 if self.current_layout_name != "NUMPAD" else 330
-            x = geom.x() + int((geom.width() - width) / 2)
-            y = geom.y() + geom.height() - height - 10
+            x, y, width, height = self._dock_geometry(screen.availableGeometry())
             self.setGeometry(x, y, width, height)
             self.position_badge()
+
+    def _watch_screen(self, screen):
+        if screen:
+            # geometryChanged covers the raw resolution swap; availableGeometryChanged
+            # covers Plasma's panel/strut reflow, which can settle *after* the resolution
+            # change and on its own timeline - missing it was why the dock math could
+            # run against a stale (pre-reflow) available area.
+            screen.geometryChanged.connect(self._on_screen_geometry_changed)
+            screen.availableGeometryChanged.connect(self._on_screen_geometry_changed)
+
+    def _on_primary_screen_changed(self, screen):
+        self._watch_screen(screen)
+        self._rotation_timer.start(400)
+
+    def _on_screen_geometry_changed(self, *_args):
+        # Rotation fires several intermediate geometry updates in quick
+        # succession while it animates - debounce to act once it settles.
+        self._rotation_timer.start(400)
+
+    def _handle_screen_change(self):
+        self._sync_kwin_rules_to_screen()
+        if self.isVisible():
+            self.position_bottom()
+        else:
+            self.position_badge()
+
+    def _sync_kwin_rules_to_screen(self):
+        """Rewrite the badge/main KWin rule geometry to match the current screen
+        and ask KWin to reload. Without this, a rotation leaves the rules pointing
+        at pixel coordinates computed for the old orientation - the badge can end
+        up entirely off-screen and the main window wider than the display."""
+        screen = QApplication.primaryScreen()
+        if not screen or not os.path.exists(KWIN_RULES_PATH):
+            return
+        geom = screen.availableGeometry()
+        main_x, main_y, main_w, main_h = self._dock_geometry(geom)
+        badge_x, badge_y = self._badge_geometry(geom)
+
+        try:
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(KWIN_RULES_PATH)
+            badge_section = main_section = None
+            for section in config.sections():
+                title = config[section].get("title", "")
+                if title == KWIN_RULE_TITLE_BADGE:
+                    badge_section = section
+                elif title == KWIN_RULE_TITLE_MAIN:
+                    main_section = section
+
+            def kwrite(group, key, value):
+                subprocess.run(
+                    ["kwriteconfig6", "--file", KWIN_RULES_PATH,
+                     "--group", group, "--key", key, str(value)],
+                    check=False, timeout=5,
+                )
+
+            if badge_section:
+                kwrite(badge_section, "position", f"{badge_x},{badge_y}")
+            if main_section:
+                kwrite(main_section, "position", f"{main_x},{main_y}")
+                kwrite(main_section, "size", f"{main_w},{main_h}")
+                # "Apply" (3) only takes effect at initial mapping; "Force" (2)
+                # re-applies live too, which a rotation-driven resize needs.
+                kwrite(main_section, "sizerule", "2")
+
+            if badge_section or main_section:
+                subprocess.run(
+                    ["qdbus-qt6", "org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure"],
+                    check=False, timeout=5,
+                )
+        except Exception as err:
+            print(f"[WindowRules] Failed to sync geometry: {err}", file=sys.stderr)
 
     def hide_to_badge(self):
         self.hide()

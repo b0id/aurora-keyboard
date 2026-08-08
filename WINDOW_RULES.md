@@ -58,7 +58,65 @@ rules=498c3a9e-7b5f-42b3-8a5a-46e47e67ef2a,3d7bb26c-6247-43d3-b27c-a8f7d9676d1c
 
 `position=1400,800` for the badge and `position=40,600` / `size=1520,409` for the
 main window are specific to this device's screen (a 1920×1280 tablet display) —
-recalculate for a different resolution.
+recalculate for a different resolution. As of the rotation fix below, the app
+recalculates and rewrites these values itself, so treat them as a live cache
+rather than a value to hand-tune.
+
+## Rotation / resolution changes are handled automatically
+
+KWin rules are just stored pixel values — they have no idea the screen exists,
+let alone that it rotated. Left alone, a portrait/landscape flip on this tablet
+put the badge's forced `position` past the new (narrower) screen edge entirely,
+and left the main window's forced `size` wider than the display, because its
+`sizerule` was `3` (**Apply** — only takes effect once, at initial mapping) rather
+than `2` (**Force** — reapplies continuously). That's also why position "fixed
+itself" on rotation but size didn't: Force live-updates, Apply doesn't.
+
+`keyboard_window.py` now watches `QScreen.geometryChanged` (with a 400ms debounce,
+since rotation fires several intermediate geometry events while it animates) and,
+on any change:
+
+1. Recomputes badge and main-window position/size from the *current*
+   `screen.availableGeometry()`, using the same anchor formulas as
+   `position_badge()`/`position_bottom()` (bottom-right corner for the badge,
+   95%-width bottom-docked for the main window) — see `_badge_geometry()` /
+   `_dock_geometry()`.
+2. Writes the new values into `~/.config/kwinrulesrc` via `kwriteconfig6`,
+   locating the right rule groups by `title=` match (not by hardcoded UUID, since
+   those can change if the rules are ever rebuilt).
+3. Forces `sizerule=2` on the main rule every time, so a stale `Apply` value
+   left over from a GUI edit doesn't quietly reintroduce this bug.
+4. Calls `qdbus-qt6 ... reconfigure` so the rewritten rule takes effect
+   immediately, without waiting for the windows to unmap/remap.
+
+This also runs once at startup (`_sync_kwin_rules_to_screen()` in `__init__`),
+so relaunching the app while already in portrait self-heals the rule file instead
+of inheriting whatever orientation it was last written for.
+
+Two more bugs surfaced once rotation testing made the rule geometry live instead
+of static, both fixed in the same anchor formulas:
+
+**Height was a guessed constant, not the real content height.** `position_bottom()`
+computed height as `360` (or `330` for NUMPAD) — a stale placeholder that never
+mattered while `sizerule` was `3` (Apply-once), because the *actual* size on screen
+stayed whatever the hand-tuned rule (`409`) applied at first launch. Once rotation
+required `sizerule=2` (Force, so it can live-update), that guess started actively
+overwriting the correct height on every sync — including at plain landscape
+startup, no rotation needed. Measured directly (`self.sizeHint().height()`): `409`
+for QWERTY/NUMPAD, `353` for DEV/TERM (a case the old constant didn't even
+distinguish). `_dock_geometry()` now reads `self.sizeHint().height()` instead of
+guessing.
+
+**The bottom margin didn't clear the taskbar.** Both anchor formulas left only a
+10–24px gap above the bottom of `screen.availableGeometry()`, on the assumption
+that `availableGeometry()` already excludes the panel. It doesn't — not reliably,
+for a `Force`-positioned `Tool`-flagged window like these. Confirmed by screenshot
+pixel-sampling: the taskbar's top edge sits at physical `y=1226` (of `1280`), and
+the forced window was landing with its bottom ~35 logical px past that, hiding the
+last key row behind the panel. Fixed with an explicit `BOTTOM_CLEARANCE = 55`
+(logical px) constant used by both `_badge_geometry()` and `_dock_geometry()`,
+derived from that measurement plus a small buffer — not from trusting
+`availableGeometry()`'s own panel accounting.
 
 ## Setting this up via the GUI (normal path)
 

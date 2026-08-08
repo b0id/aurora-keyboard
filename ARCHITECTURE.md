@@ -301,6 +301,14 @@ autostart entry to `~/.config/autostart` that launches with `--badge-only`
 (§3.5) not currently automated by the installer; a future revision could add
 a udev rule drop-in as part of install.
 
+Also not automated: forcing the badge/main-window screen position via KDE Window
+Rules (Wayland gives the app itself no reliable way to do this - see the drag/position
+history in §4). This is compositor-side config, external to the app, covered fully
+in `WINDOW_RULES.md` - including four non-obvious failure modes (silent detection
+failures, one-shot vs. persistent rule strength, and a required manual
+`reconfigure()` call after any non-GUI edit) that make it worth reading before
+attempting this by hand again.
+
 ## 8. Roadmap
 
 ### Swipe-to-type (in progress — see SWIPE_SPEC.md)
