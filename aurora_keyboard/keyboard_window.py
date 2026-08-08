@@ -119,24 +119,25 @@ class SwipeTrailOverlay(QWidget):
 
 
 class CandidateBar(QFrame):
-    """Sleek suggestion bar displaying word candidates with instant auto-commit and large touch chips."""
+    """Sleek suggestion bar displaying word candidates with instant auto-commit and responsive touch chips."""
 
     def __init__(self, parent_window):
         super().__init__()
         self.parent_window = parent_window
         self.setObjectName("candidate_bar")
-        self.setFixedHeight(44)
+        self.setMinimumHeight(24)
+        self.setMaximumHeight(36)
 
         self.auto_commit = True
         self.last_inserted_word = None
 
         self.bar_layout = QHBoxLayout(self)
-        self.bar_layout.setContentsMargins(8, 3, 8, 3)
-        self.bar_layout.setSpacing(8)
+        self.bar_layout.setContentsMargins(6, 2, 6, 2)
+        self.bar_layout.setSpacing(4)
         self.chip_buttons = []
 
         self._placeholder_label = QLabel("✦ Swipe across keys to type")
-        self._placeholder_label.setStyleSheet("color: rgba(255, 255, 255, 0.4); font-size: 13px; font-style: italic; padding: 2px 8px;")
+        self._placeholder_label.setStyleSheet("color: rgba(255, 255, 255, 0.4); font-size: 11px; font-style: italic; padding: 1px 4px;")
         self.bar_layout.addWidget(self._placeholder_label)
         self.bar_layout.addStretch()
 
@@ -151,7 +152,7 @@ class CandidateBar(QFrame):
         if not candidates:
             self.last_inserted_word = None
             self._placeholder_label = QLabel("✦ Swipe across keys to type")
-            self._placeholder_label.setStyleSheet("color: rgba(255, 255, 255, 0.4); font-size: 13px; font-style: italic; padding: 2px 8px;")
+            self._placeholder_label.setStyleSheet("color: rgba(255, 255, 255, 0.4); font-size: 11px; font-style: italic; padding: 1px 4px;")
             self.bar_layout.addWidget(self._placeholder_label)
             self.bar_layout.addStretch()
             return
@@ -159,7 +160,7 @@ class CandidateBar(QFrame):
         # Engine Badge
         tag = "⚡ FUTO" if "futo" in backend else "✦ Swipe"
         badge = QLabel(tag)
-        badge.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: bold; padding: 3px 6px; background: rgba(56, 189, 248, 0.15); border-radius: 4px;")
+        badge.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold; padding: 2px 4px; background: rgba(56, 189, 248, 0.15); border-radius: 4px;")
         self.bar_layout.addWidget(badge)
 
         top_word = candidates[0]
@@ -172,7 +173,9 @@ class CandidateBar(QFrame):
             display_text = f"✓ {word}" if (i == 0 and self.auto_commit) else word
             btn = QPushButton(display_text)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setFixedHeight(34)
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+            btn.setMinimumHeight(20)
+            btn.setStyleSheet("font-size: 12px; padding: 1px 6px;")
             if i == 0:
                 btn.setProperty("class", "candidate-chip-top")
             else:
@@ -304,8 +307,8 @@ class TouchResizeGrip(QLabel):
             screen = QApplication.primaryScreen()
             max_w = screen.availableGeometry().width() if screen else 1920
             max_h = screen.availableGeometry().height() if screen else 1280
-            new_w = max(380, min(max_w, self._start_size.width() + delta.x()))
-            new_h = max(160, min(max_h - 80, self._start_size.height() + delta.y()))
+            new_w = max(360, min(max_w, self._start_size.width() + delta.x()))
+            new_h = max(95, min(max_h - 80, self._start_size.height() + delta.y()))
             self.parent_window.resize(new_w, new_h)
             event.accept()
 
@@ -544,13 +547,14 @@ class AuroraKeyboardWindow(QWidget):
         if not hasattr(self, 'keys_container') or not getattr(self, 'key_buttons', None):
             return
         total_h = self.keys_container.height()
-        if total_h > 80:
+        if total_h > 20:
             row_h = total_h / 5.0
-            font_px = max(11, min(int(row_h * 0.36), 22))
+            font_px = max(8, min(int(row_h * 0.42), 22))
+            padding_px = 0 if row_h < 25 else 2
             for btn in self.key_buttons:
                 info = getattr(btn, 'key_info', None)
                 if info and info.get("type") == "char":
-                    btn.setStyleSheet(f"font-size: {font_px}px;")
+                    btn.setStyleSheet(f"font-size: {font_px}px; padding: {padding_px}px 0px;")
 
     def on_size_mode_changed(self, text):
         if "Default" in text:
@@ -568,11 +572,15 @@ class AuroraKeyboardWindow(QWidget):
         geom = screen.availableGeometry() if screen else None
         max_w = geom.width() if geom else 1920
         max_h = geom.height() if geom else 1280
+        base_w = int(max_w * 0.95) if not geom else int(geom.width() * 0.95)
+        base_h = 409
+        min_w = int(base_w * 0.25)
+        min_h = int(base_h * 0.25)
         
         cur_w = self.width()
         cur_h = self.height()
-        new_w = max(380, min(max_w - 20, int(cur_w * factor)))
-        new_h = max(160, min(max_h - BOTTOM_CLEARANCE - 20, int(cur_h * factor)))
+        new_w = max(min_w, min(max_w - 20, int(cur_w * factor)))
+        new_h = max(min_h, min(max_h - BOTTOM_CLEARANCE - 20, int(cur_h * factor)))
         
         cur_pos = self.pos()
         new_x = max(10, min(max_w - new_w - 10, cur_pos.x()))
@@ -592,15 +600,15 @@ class AuroraKeyboardWindow(QWidget):
         base_w = int(geom.width() * 0.95)
         base_h = 409
         
-        if "50%" in text:
+        if "25%" in text:
+            target_w = int(base_w * 0.25)
+            target_h = int(base_h * 0.25)
+        elif "50%" in text:
             target_w = int(base_w * 0.50)
-            target_h = int(base_h * 0.55)
-        elif "65%" in text:
-            target_w = int(base_w * 0.65)
-            target_h = int(base_h * 0.70)
+            target_h = int(base_h * 0.50)
         elif "75%" in text:
             target_w = int(base_w * 0.75)
-            target_h = int(base_h * 0.80)
+            target_h = int(base_h * 0.75)
         elif "125%" in text:
             target_w = min(geom.width() - 20, int(base_w * 1.25))
             target_h = int(base_h * 1.25)
@@ -631,8 +639,8 @@ class AuroraKeyboardWindow(QWidget):
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(12, 8, 12, 12)
-        self.main_layout.setSpacing(4)
+        self.main_layout.setContentsMargins(8, 4, 8, 8)
+        self.main_layout.setSpacing(3)
 
         # 1. Top Drag & Action Bar
         self.action_bar = QFrame(self)
@@ -672,10 +680,10 @@ class AuroraKeyboardWindow(QWidget):
         zoom_out_btn.clicked.connect(lambda: self.scale_keyboard(0.90))
         bar_layout.addWidget(zoom_out_btn)
 
-        # Scale Presets (including 1/4 Tile Mini)
+        # Scale Presets (including 25% Mini and 50% 1/4 Tile)
         self.scale_preset_box = QComboBox()
         self.scale_preset_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.scale_preset_box.addItems(["50% (1/4 Tile)", "65% (Compact)", "100% (Standard)", "125% (Large)"])
+        self.scale_preset_box.addItems(["25% (Mini)", "50% (1/4 Tile)", "75% (Compact)", "100% (Standard)", "125% (Large)"])
         self.scale_preset_box.setCurrentText("100% (Standard)")
         self.scale_preset_box.currentTextChanged.connect(self.on_scale_preset_selected)
         bar_layout.addWidget(self.scale_preset_box)
@@ -795,7 +803,7 @@ class AuroraKeyboardWindow(QWidget):
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(4)
+            row_layout.setSpacing(2)
 
             for key_info in row_data:
                 if key_info.get("type") == "char":
@@ -818,7 +826,7 @@ class AuroraKeyboardWindow(QWidget):
                     QSizePolicy.Policy.Expanding,
                     QSizePolicy.Policy.Expanding
                 )
-                btn.setMinimumWidth(int(14 * span))
+                btn.setMinimumWidth(int(8 * span))
 
                 cls = key_info.get("class", "")
                 if cls:
@@ -1023,8 +1031,8 @@ class AuroraKeyboardWindow(QWidget):
         within an available-screen rect."""
         if getattr(self, 'position_mode', None) == "remember" and getattr(self, 'custom_size', None):
             width, height = self.custom_size
-            width = max(380, min(geom.width() - 20, width))
-            height = max(160, min(geom.height() - BOTTOM_CLEARANCE - 20, height))
+            width = max(360, min(geom.width() - 20, width))
+            height = max(95, min(geom.height() - BOTTOM_CLEARANCE - 20, height))
             if getattr(self, 'custom_pos', None):
                 raw_x, raw_y = self.custom_pos
                 x = max(geom.x() + 10, min(geom.x() + geom.width() - width - 10, raw_x))
