@@ -61,7 +61,9 @@ Aurora was built from the ground up to solve touch input on modern Linux once an
    Persistent latched modifier engine lets you lock `Ctrl+Shift` and tap `▲ Up` repeatedly to smoothly scroll terminal buffers without modifiers resetting between keystrokes.
 5. **Zero-Dependency Fallback Engine**:
    If the neural daemon is offline, Aurora automatically falls back to an internal SHARK²-style geometric polyline decoder with zero external ML dependencies.
-6. **Glassmorphic Aesthetic**:
+6. **Independent Orientation View Profiles & Calibration**:
+   Dedicated geometry, scale, and layout presets for Landscape vs. Portrait tablet modes. Drag or resize to your ideal spot and tap **`📌 Set Default`** to lock it in for that orientation.
+7. **Glassmorphic Aesthetic**:
    Ultra-modern floating UI with 4 curated themes, anti-aliased glowing gesture trails, dynamic auto-commit candidate bar, and a collapsible floating corner badge.
 
 ---
