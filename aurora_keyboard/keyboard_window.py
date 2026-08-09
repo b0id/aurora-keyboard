@@ -5,6 +5,7 @@ glowing gesture trail overlay, FUTO neural swipe-to-type, and orientation view p
 
 import sys
 import os
+from typing import Tuple
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QComboBox, QLabel, QFrame, QSizePolicy
@@ -219,7 +220,7 @@ class AuroraKeyboardWindow(QWidget):
         # Size / Position Mode Selector
         self.size_mode_box = QComboBox()
         self.size_mode_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.size_mode_box.addItems(["Remember", "Auto-Dock"])
+        self.size_mode_box.addItems(["Auto-Dock", "Remember"])
         if self.geometry_mgr.position_mode == "default":
             self.size_mode_box.setCurrentText("Auto-Dock")
         else:
@@ -294,6 +295,15 @@ class AuroraKeyboardWindow(QWidget):
         self.setMinimumSize(min_w, min_h)
         self.setMaximumSize(max_w, max_h)
 
+    def _sample_live_geometry(self) -> Tuple[int, int, int, int]:
+        """Queries live Wayland screen coordinates from KWin, falling back to Qt pos/size."""
+        kwin_geom = self.geometry_mgr.get_window_geometry_kwin("Aurora Touch Keyboard Main")
+        if kwin_geom:
+            kx, ky, _, _ = kwin_geom
+            return (kx, ky, self.width(), self.height())
+        p = self.pos()
+        return (p.x(), p.y(), self.width(), self.height())
+
     def apply_orientation_geometry(self):
         """Applies target geometry for the current orientation view and moves the window via KWin."""
         screen = QApplication.primaryScreen()
@@ -327,11 +337,16 @@ class AuroraKeyboardWindow(QWidget):
         screen = QApplication.primaryScreen()
         geom = screen.availableGeometry() if screen else None
         orient = self.geometry_mgr.get_orientation_key(geom)
-        p = self.pos()
-        self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
+        x, y, w, h = self._sample_live_geometry()
+        self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
+        self.geometry_mgr.position_mode = "remember"
+        if hasattr(self, 'size_mode_box') and self.size_mode_box.currentText() != "Remember":
+            self.size_mode_box.blockSignals(True)
+            self.size_mode_box.setCurrentText("Remember")
+            self.size_mode_box.blockSignals(False)
         self.save_config_and_sync()
         if hasattr(self, 'candidate_bar'):
-            self.candidate_bar.show_toast(f"✓ Locked {orient.capitalize()} preset ({self.width()}×{self.height()} at {p.x()},{p.y()})")
+            self.candidate_bar.show_toast(f"✓ Locked {orient.capitalize()} preset ({w}×{h} at {x},{y})")
 
     def save_config_and_sync(self):
         self.geometry_mgr.current_theme = self.current_theme
@@ -341,13 +356,14 @@ class AuroraKeyboardWindow(QWidget):
 
     def on_user_drag_finished(self):
         """Called immediately after a touch/mouse drag releases."""
-        screen = QApplication.primaryScreen()
-        geom = screen.availableGeometry() if screen else None
-        orient = self.geometry_mgr.get_orientation_key(geom)
-        p = self.pos()
-        self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
-        self._save_timer.stop()
-        self.save_config_and_sync()
+        if self.geometry_mgr.position_mode == "remember":
+            screen = QApplication.primaryScreen()
+            geom = screen.availableGeometry() if screen else None
+            orient = self.geometry_mgr.get_orientation_key(geom)
+            x, y, w, h = self._sample_live_geometry()
+            self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
+            self._save_timer.stop()
+            self.save_config_and_sync()
 
     def _watch_screen(self, screen):
         if screen:
@@ -378,41 +394,40 @@ class AuroraKeyboardWindow(QWidget):
         self._sync_scale_preset_label()
 
         if self.isVisible() and not getattr(self, '_programmatic_geometry', False):
-            screen = QApplication.primaryScreen()
-            geom = screen.availableGeometry() if screen else None
-            orient = self.geometry_mgr.get_orientation_key(geom)
-            p = self.pos()
-            self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
-            self._save_timer.start(500)
+            if self.geometry_mgr.position_mode == "remember":
+                screen = QApplication.primaryScreen()
+                geom = screen.availableGeometry() if screen else None
+                orient = self.geometry_mgr.get_orientation_key(geom)
+                x, y, w, h = self._sample_live_geometry()
+                self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
+                self._save_timer.start(500)
 
     def moveEvent(self, event):
         super().moveEvent(event)
         if self.isVisible() and not getattr(self, '_programmatic_geometry', False):
-            screen = QApplication.primaryScreen()
-            geom = screen.availableGeometry() if screen else None
-            orient = self.geometry_mgr.get_orientation_key(geom)
-            p = self.pos()
-            self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
-            self._save_timer.start(500)
+            if self.geometry_mgr.position_mode == "remember":
+                self._save_timer.start(500)
 
     def closeEvent(self, event: QCloseEvent):
         """Ensures active window geometry is saved and synced upon closing."""
-        screen = QApplication.primaryScreen()
-        geom = screen.availableGeometry() if screen else None
-        orient = self.geometry_mgr.get_orientation_key(geom)
-        p = self.pos()
-        self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
+        if self.geometry_mgr.position_mode == "remember":
+            screen = QApplication.primaryScreen()
+            geom = screen.availableGeometry() if screen else None
+            orient = self.geometry_mgr.get_orientation_key(geom)
+            x, y, w, h = self._sample_live_geometry()
+            self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
         self.save_config_and_sync()
         event.accept()
         QApplication.instance().quit()
 
     def _on_about_to_quit(self):
-        screen = QApplication.primaryScreen()
-        geom = screen.availableGeometry() if screen else None
-        orient = self.geometry_mgr.get_orientation_key(geom)
-        p = self.pos()
-        if p.x() > 0 or p.y() > 0:
-            self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
+        if self.geometry_mgr.position_mode == "remember":
+            screen = QApplication.primaryScreen()
+            geom = screen.availableGeometry() if screen else None
+            orient = self.geometry_mgr.get_orientation_key(geom)
+            x, y, w, h = self._sample_live_geometry()
+            if x > 0 or y > 0:
+                self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
         self.geometry_mgr.save_config()
 
     def _update_responsive_typography(self):
@@ -474,14 +489,15 @@ class AuroraKeyboardWindow(QWidget):
         self._programmatic_geometry = False
         self.geometry_mgr.set_window_geometry_kwin("Aurora Touch Keyboard Main", x, y, w, h)
         orient = self.geometry_mgr.get_orientation_key(geom)
-        self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
+        if self.geometry_mgr.position_mode == "remember":
+            self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
         self._save_timer.start(500)
 
     def scale_keyboard(self, factor: float):
-        cur_pos = self.pos()
-        new_w = int(self.width() * factor)
+        x, y, w, h = self._sample_live_geometry()
+        new_w = int(w * factor)
         natural_h = self._natural_height
-        self._apply_custom_geometry(cur_pos.x(), cur_pos.y(), new_w, natural_h)
+        self._apply_custom_geometry(x, y, new_w, natural_h)
 
     def on_scale_preset_selected(self, text: str):
         screen = QApplication.primaryScreen()
@@ -494,8 +510,8 @@ class AuroraKeyboardWindow(QWidget):
         fraction = next((f for label, f in self._SCALE_PRESETS if text.startswith(label.split()[0])), 1.0)
         target_w = int(base_w * fraction)
 
-        cur_pos = self.pos()
-        self._apply_custom_geometry(cur_pos.x(), cur_pos.y(), target_w, natural_h)
+        x, y, _, _ = self._sample_live_geometry()
+        self._apply_custom_geometry(x, y, target_w, natural_h)
 
     def toggle_dock(self):
         screen = QApplication.primaryScreen()
@@ -548,7 +564,7 @@ class AuroraKeyboardWindow(QWidget):
 
                 label = key_info.get("label", "")
                 if self.shift_active or self.caps_active:
-                    label = key_info.get("shift_label", label.upper() if len(base_label := label) == 1 else label)
+                    label = key_info.get("shift_label", label.upper() if len(label) == 1 else label)
 
                 display_label = label.replace("&", "&&") if ("&" in label and "&&" not in label) else label
                 btn.setText(display_label)

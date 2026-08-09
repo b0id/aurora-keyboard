@@ -58,7 +58,8 @@ class GeometryManager:
     """
 
     def __init__(self):
-        self.position_mode: str = "remember"  # "remember" or "default"
+        # Default mode is 'default' (Auto-Dock) on fresh initialization
+        self.position_mode: str = "default"  # "default" (Auto-Dock) or "remember"
         self.profiles: Dict[str, Optional[OrientationProfile]] = {
             "landscape": None,
             "portrait": None
@@ -141,6 +142,100 @@ class GeometryManager:
         )
         self.position_mode = "remember"
 
+    def get_window_geometry_kwin(self, window_title: str) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Queries the KWin Wayland compositor directly for the live global (x, y, width, height)
+        of the window. Bypasses Wayland limitations where Qt's QWidget.pos() is unaware of
+        startSystemMove() repositioning.
+        """
+        tag = f"AURORA_GEOM_QUERY_{os.getpid()}"
+        script = f"""
+        var windows = workspace.windowList();
+        for (var i = 0; i < windows.length; i++) {{
+            var win = windows[i];
+            if (win.caption && win.caption.indexOf("{window_title}") !== -1) {{
+                console.warn("{tag}:" + Math.round(win.frameGeometry.x) + "," + Math.round(win.frameGeometry.y) + "," + Math.round(win.frameGeometry.width) + "," + Math.round(win.frameGeometry.height));
+                break;
+            }}
+        }}
+        """
+        script_file = None
+        plugin_name = f"aurora_q_{os.getpid()}"
+        try:
+            with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as f:
+                f.write(script)
+                script_file = f.name
+
+            res = subprocess.run(
+                ["qdbus-qt6", "org.kde.KWin", "/Scripting",
+                 "org.kde.kwin.Scripting.loadScript", script_file, plugin_name],
+                capture_output=True, text=True, timeout=2
+            )
+            sid = res.stdout.strip()
+            if sid and sid.isdigit():
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.run"], capture_output=True, timeout=2)
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.stop"], capture_output=True, timeout=2)
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", plugin_name], capture_output=True, timeout=2)
+
+            out = subprocess.run(["journalctl", "--user", "-n", "8", "--no-pager"], capture_output=True, text=True, timeout=2)
+            for line in reversed(out.stdout.splitlines()):
+                if f"{tag}:" in line:
+                    geom_str = line.split(f"{tag}:")[1].strip()
+                    parts = [int(v) for v in geom_str.split(",")]
+                    if len(parts) == 4:
+                        return (parts[0], parts[1], parts[2], parts[3])
+        except Exception:
+            pass
+        finally:
+            if script_file and os.path.exists(script_file):
+                try:
+                    os.remove(script_file)
+                except Exception:
+                    pass
+        return None
+
+    def set_window_geometry_kwin(self, window_title: str, x: int, y: int, w: int, h: int) -> bool:
+        """
+        Directly instructs the KWin Wayland compositor to reposition and resize the window.
+        Bypasses Wayland client limitations where QWidget.move() is ignored.
+        """
+        script = f"""
+        var windows = workspace.windowList();
+        for (var i = 0; i < windows.length; i++) {{
+            var win = windows[i];
+            if (win.caption && win.caption.indexOf("{window_title}") !== -1) {{
+                win.frameGeometry = {{ x: {int(x)}, y: {int(y)}, width: {int(w)}, height: {int(h)} }};
+            }}
+        }}
+        """
+        script_file = None
+        plugin_name = f"aurora_geo_{os.getpid()}_{int(x)}_{int(y)}"
+        try:
+            with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as f:
+                f.write(script)
+                script_file = f.name
+
+            res = subprocess.run(
+                ["qdbus-qt6", "org.kde.KWin", "/Scripting",
+                 "org.kde.kwin.Scripting.loadScript", script_file, plugin_name],
+                capture_output=True, text=True, timeout=2
+            )
+            sid = res.stdout.strip()
+            if sid and sid.isdigit():
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.run"], capture_output=True, timeout=2)
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.stop"], capture_output=True, timeout=2)
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", plugin_name], capture_output=True, timeout=2)
+                return True
+        except Exception:
+            pass
+        finally:
+            if script_file and os.path.exists(script_file):
+                try:
+                    os.remove(script_file)
+                except Exception:
+                    pass
+        return False
+
     def import_from_kwin_rules(self, orientation: Optional[str] = None) -> bool:
         """
         Samples coordinates directly from ~/.config/kwinrulesrc if configured by the user via KDE GUI.
@@ -174,7 +269,7 @@ class GeometryManager:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                self.position_mode = data.get("position_mode", "remember")
+                self.position_mode = data.get("position_mode", "default")
                 presets = data.get("orientation_presets", {})
                 for key in ("landscape", "portrait"):
                     entry = presets.get(key)
@@ -217,48 +312,6 @@ class GeometryManager:
                 }, f, indent=2)
         except Exception as e:
             print(f"[GeometryManager] Config save error: {e}", file=sys.stderr)
-
-    def set_window_geometry_kwin(self, window_title: str, x: int, y: int, w: int, h: int) -> bool:
-        """
-        Directly instructs the KWin Wayland compositor to reposition and resize the window.
-        Bypasses Wayland client limitations where QWidget.move() is ignored.
-        """
-        script = f"""
-        var windows = workspace.windowList();
-        for (var i = 0; i < windows.length; i++) {{
-            var win = windows[i];
-            if (win.caption && win.caption.indexOf("{window_title}") !== -1) {{
-                win.frameGeometry = {{ x: {int(x)}, y: {int(y)}, width: {int(w)}, height: {int(h)} }};
-            }}
-        }}
-        """
-        script_file = None
-        plugin_name = f"aurora_geo_{os.getpid()}_{int(x)}_{int(y)}"
-        try:
-            with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as f:
-                f.write(script)
-                script_file = f.name
-
-            res = subprocess.run(
-                ["qdbus-qt6", "org.kde.KWin", "/Scripting",
-                 "org.kde.kwin.Scripting.loadScript", script_file, plugin_name],
-                capture_output=True, text=True, timeout=2
-            )
-            sid = res.stdout.strip()
-            if sid and sid.isdigit():
-                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.run"], capture_output=True, timeout=2)
-                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.stop"], capture_output=True, timeout=2)
-                subprocess.run(["qdbus-qt6", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", plugin_name], capture_output=True, timeout=2)
-                return True
-        except Exception as err:
-            pass
-        finally:
-            if script_file and os.path.exists(script_file):
-                try:
-                    os.remove(script_file)
-                except Exception:
-                    pass
-        return False
 
     def sync_kwin_rules(self, active_geom=None, natural_height: int = 360):
         """

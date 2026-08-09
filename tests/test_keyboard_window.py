@@ -76,15 +76,17 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
         self.window.update_key_labels()
 
     def test_sample_current_placement(self):
-        self.window.resize(1000, 350)
-        self.window.move(50, 400)
-        self.window.sample_current_placement()
+        from unittest.mock import patch
+        with patch.object(self.window.geometry_mgr, "get_window_geometry_kwin", return_value=(50, 400, 1000, 350)):
+            self.window.resize(1000, 350)
+            self.window.move(50, 400)
+            self.window.sample_current_placement()
 
-        orient = self.window._orientation_key()
-        prof = self.window.geometry_mgr.profiles.get(orient)
-        self.assertIsNotNone(prof)
-        self.assertEqual(prof.size, (1000, 350))
-        self.assertEqual(prof.pos, (50, 400))
+            orient = self.window._orientation_key()
+            prof = self.window.geometry_mgr.profiles.get(orient)
+            self.assertIsNotNone(prof)
+            self.assertEqual(prof.size, (1000, 350))
+            self.assertEqual(prof.pos, (50, 400))
 
     def test_minimize_and_restore(self):
         self.window.show()
