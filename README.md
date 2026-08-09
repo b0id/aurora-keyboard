@@ -2,20 +2,25 @@
 
 <div align="center">
 
-[![Wayland Native](https://img.shields.io/badge/Wayland-Native%20(KWin%20%26%20wlroots)-blue?style=for-the-badge&logo=kde)](https://kde.org)
-[![Input Engine](https://img.shields.io/badge/Input%20Engine-Kernel%20%2Fdev%2Fuinput-red?style=for-the-badge&logo=linux)](https://kernel.org)
-[![Neural Gesture](https://img.shields.io/badge/Neural%20Swipe-FUTO%20%2F%20ExecuTorch-orange?style=for-the-badge&logo=pytorch)](https://github.com/futo-org)
-[![License](https://img.shields.io/badge/License-GPLv3%20%2F%20MIT-green?style=for-the-badge)](LICENSE)
+[![Wayland Native](https://img.shields.io/badge/Wayland-Native%20(KWin%20%26%20wlroots)-38bdf8?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org)
+[![Input Engine](https://img.shields.io/badge/Input%20Engine-Kernel%20%2Fdev%2Fuinput-ef4444?style=for-the-badge&logo=linux&logoColor=white)](https://kernel.org)
+[![Neural Gesture](https://img.shields.io/badge/Neural%20Swipe-FUTO%20%2F%20ExecuTorch-f97316?style=for-the-badge&logo=pytorch&logoColor=white)](https://github.com/futo-org)
+[![Python](https://img.shields.io/badge/Python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.14-3b82f6?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![License](https://img.shields.io/badge/License-GPLv3%20%2F%20Copyleft-10b981?style=for-the-badge)](LICENSE)
 
-**The first Wayland-native, glassmorphic floating on-screen keyboard for Linux tablets and handhelds featuring kernel-level `/dev/uinput` hardware typing, continuous terminal chording, and real-time neural swipe-to-type.**
+<h3>The Next-Generation Glassmorphic On-Screen Keyboard for Linux Tablets, 2-in-1s & Handhelds</h3>
+
+<p align="center">
+  <b>Kernel-level <code>/dev/uinput</code> hardware typing</b> • <b>Real-time neural swipe-to-type</b> • <b>Continuous terminal modifier chording</b> • <b>Zero focus stealing</b> • <b>Dual-orientation view profiles</b>
+</p>
 
 <br/>
 
-<img src="docs/images/aurora_keyboard_demo.png" alt="Aurora Touch Keyboard on KDE Plasma 6 Wayland with Kitty Terminal" width="880" style="border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);"/>
+<img src="docs/images/aurora_keyboard_demo.png" alt="Aurora Touch Keyboard on KDE Plasma 6 Wayland with Kitty Terminal" width="920" style="border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.15);"/>
 
 <br/><br/>
 
-[Features](#-why-aurora) • [Portability Matrix](#-portability-matrix) • [Architecture](#-architecture) • [Quickstart](#-quickstart) • [Themes](#-themes--customization) • [Contributing](#-contributing)
+[✨ Features](#-why-aurora) • [🆚 Comparison](#-how-aurora-compares) • [🌍 Portability](#-portability--hardware-matrix) • [🏗️ Architecture](#-system-architecture) • [🚀 Quickstart](#-quickstart) • [🎨 Themes](#-themes--customization) • [🤝 Contributing](#-contributing)
 
 </div>
 
@@ -23,175 +28,248 @@
 
 ## ⚡ The Problem with Linux Touch Keyboards Today
 
-If you've ever used a Linux tablet (Surface Pro, Dell Latitude Detachable, ThinkPad X1 Fold), 2-in-1 laptop, or gaming handheld (Steam Deck, ROG Ally, Legion Go) on Wayland, you know the struggle:
+If you've ever tried using a Linux tablet (Surface Pro, Dell Latitude Detachable, ThinkPad Fold), 2-in-1 laptop, or gaming handheld (Steam Deck, ROG Ally, Legion Go) on Wayland, you know the frustration:
 
-* **Maliit / Squeekboard**: Rigid, clunky dock placement, no floating mode, zero swipe-to-type, and terminal modifier keys (`Ctrl+Shift+Up` scrolling, `Ctrl+C`) are frustratingly broken.
-* **Onboard / Florence**: Ancient X11 relics that completely crash or fail to composite under modern Wayland compositors (Plasma 6, GNOME 46+, Hyprland).
-* **IBus / Fcitx Virtual Panels**: Rely on application-level input method hooks that flatly ignore raw terminals (Kitty, Alacritty), TTYs, Neovim, games, and sandboxed Flatpaks.
+* ❌ **Maliit & Squeekboard**: Rigid full-width bottom docks that eat 50% of your screen, zero swipe typing, and terminal modifier keys (`Ctrl+Shift+▲` buffer scrolling, `Ctrl+C`) reset after a single tap.
+* ❌ **Onboard & Florence**: Ancient X11 relics that completely crash, glitch, or fail to composite under modern Wayland compositors (Plasma 6, GNOME 46+, Hyprland).
+* ❌ **IBus / Fcitx Virtual Panels**: Rely on application-level text-input protocols that **flatly ignore raw terminals (Kitty, Alacritty, Foot), Neovim, TTYs, games, and sandboxed Flatpaks**.
 
----
-
-## 🚀 Why Aurora is Different
-
-Aurora was built from the ground up to solve touch input on modern Linux once and for all:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Aurora Touch Keyboard                             │
-│                                                                             │
-│  ❖ Drag Keyboard   [All] [Copy] [Paste] [Undo] [Esc] [Tab]   [⬇ Dock] [🗕]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ⚡ FUTO  [ ✓ well ]  [ will ]  [ wall ]  [ we ]                   [ ✕ ]     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│   1   2   3   4   5   6   7   8   9   0   -   =   ⌫                         │
-│  Tab  q   w   e   r   t   y   u   i   o   p   [   ]   \                     │
-│  Caps a   s   d   f   g   h   j   k   l   ;   '   Enter ↵                   │
-│  Shift  z   x   c   v   b   n   m   ,   .   /   Shift                       │
-│  [Ctrl] [Super] [Alt] [            Space            ] [AltGr] [◄][▲][▼][►]  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-1. **True Kernel-Level Hardware Events (`/dev/uinput`)**:
-   Emits genuine physical `EV_KEY` hardware keystrokes directly at the kernel layer. It works universally in Kitty, Neovim, Firefox, Steam games, TTYs, and sandboxed Flatpaks without depending on IBus or XTest.
-2. **Wayland-Native Zero-Focus-Stealing**:
-   Combines `WindowDoesNotAcceptFocus` + `WA_ShowWithoutActivating` with KWin's native `startSystemMove()` protocol. You can drag, dock, tap, and swipe without your target application ever losing cursor focus.
-3. **State-of-the-Art Neural Swipe-to-Type**:
-   Powered by **FUTO Swipe's** 1D-CNN spatial encoder (`honorable_sturgeon`) and transformer sequence decoder (`magic_macaw`). Delivers sub-25ms neural word prediction with time-aware $60\text{ Hz}$ kinematics, deduplicated phoneme recognition (*tree*, *good*, *well*), and instant auto-commit on gesture release.
-4. **Continuous Terminal Chording (Kitty Scrolling Fix)**:
-   Persistent latched modifier engine lets you lock `Ctrl+Shift` and tap `▲ Up` repeatedly to smoothly scroll terminal buffers without modifiers resetting between keystrokes.
-5. **Zero-Dependency Fallback Engine**:
-   If the neural daemon is offline, Aurora automatically falls back to an internal SHARK²-style geometric polyline decoder with zero external ML dependencies.
-6. **Independent Orientation View Profiles & Calibration**:
-   Dedicated geometry, scale, and layout presets for Landscape vs. Portrait tablet modes. Drag or resize to your ideal spot and tap **`📌 Set Default`** to lock it in for that orientation.
-7. **Glassmorphic Aesthetic**:
-   Ultra-modern floating UI with 4 curated themes, anti-aliased glowing gesture trails, dynamic auto-commit candidate bar, and a collapsible floating corner badge.
+**Aurora solves touch input on modern Linux once and for all.**
 
 ---
 
-## 🌍 Portability Matrix
+## 🚀 Why Aurora?
 
-Aurora runs anywhere modern Linux and `/dev/uinput` exist:
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  Aurora Touch Keyboard                                  │
+│                                                                                         │
+│  ❖ Drag   [All] [Copy] [Paste] [Esc] [Tab]   📌 Set Default   −  [100% ▾]  +   ◢ Resize │
+│  [Auto-Dock ▾]   [⬇ Dock]   [QWERTY ▾]   [Aurora Glass ▾]   [ 🗕 ]   [ ✕ ]              │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│  ⚡ FUTO   [ ✓ aurora ]   [ authority ]   [ auto ]   [ around ]                 [ ✕ ]    │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│   1     2     3     4     5     6     7     8     9     0     -     =     ⌫ Backspace   │
+│  Tab    q     w     e     r     t     y     u     i     o     p     [     ]     \       │
+│  Caps   a     s     d     f     g     h     j     k     l     ;     '     Enter ↵       │
+│  Shift  z     x     c     v     b     n     m     ,     .     /     Shift ⇧             │
+│  [Ctrl] [Super ❖] [Alt] [                Space                 ] [AltGr] [◄][▲][▼][►]   │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. ⚡ True Kernel-Level Hardware Events (`/dev/uinput`)
+Emits genuine physical `EV_KEY` hardware keystrokes directly into the Linux kernel via `/dev/uinput`. It works **universally across everything**: Kitty, Neovim, Firefox, Steam games, TTYs, and sandboxed Flatpaks without depending on IBus or XTest.
+
+### 2. 🧠 State-of-the-Art Neural Swipe-to-Type
+Powered by **FUTO Swipe's** edge neural models (1D-CNN spatial encoder `honorable_sturgeon` + Transformer sequence decoder `magic_macaw`) running via ExecuTorch.
+* **Ultra-low latency**: $<25\text{ms}$ CPU inference time with time-aware $60\text{ Hz}$ kinematic curve resampling.
+* **Instant Auto-Commit**: Top candidate is immediately typed with a trailing space upon lifting your finger.
+* **One-Tap Candidate Chips**: Tap secondary chips to auto-backspace and substitute words instantly.
+* **Zero-Dependency Fallback**: If the neural daemon is offline, automatically falls back to an internal SHARK² geometric decoder.
+
+### 3. 🪄 Glowing Neon Gesture Trail
+A transparent 60 FPS overlay renders anti-aliased Bézier glowing neon trails matching your active glassmorphic theme, complete with smooth exponential decay fading.
+
+### 4. ⌨️ Continuous Terminal Modifier Chording (Kitty / Neovim Fix)
+Persistent modifier latching lets you lock `Ctrl+Shift` and tap `▲ Up` or `▼ Down` repeatedly to smoothly scroll terminal buffers without modifiers resetting between keystrokes. Releasing `Super ❖` emits a clean tap to toggle your application launcher.
+
+### 5. 📐 Dual-Orientation View Profiles (Landscape & Portrait)
+Tablets rotate — KWin rules don't. Aurora's **View Profile Architecture** maintains independent coordinates, dimensions, dock modes, and button typography for Landscape vs. Portrait views:
+* **Auto-Dock Default**: Automatically docks centered at the bottom of the screen with taskbar clearance buffer.
+* **📌 Set Default Calibration**: Drag or resize the keyboard to your ideal spot and tap **`📌 Set Default`** to lock it in for that orientation.
+* **Direct KWin DBus Placement**: Instructs the Wayland compositor to reposition the window in $<20\text{ms}$ on rotation or restore, completely bypassing default window centering.
+
+### 6. 🔍 Dynamic Touch Tiling (25% Mini to 125% Large)
+Resize on the fly with the touch finger corner grip (`◢ Resize`), `+`/`−` zoom stepper buttons, or scale presets down to a compact **25% Mini** or **50% Quadrant** tile for side-by-side multitasking.
+
+### 7. 🗕 Collapsible Touch Launcher Badge
+Click **`🗕`** to collapse the keyboard into a sleek 160×160 floating touch badge anchored in the corner of your screen. Tap the badge anytime to instantly restore the keyboard.
+
+---
+
+## 🆚 How Aurora Compares
+
+| Feature | Maliit / Squeekboard | Onboard (X11) | GNOME OSK | **Aurora Touch Keyboard** |
+|---|---|---|---|---|
+| **Terminal & Neovim Compatibility** | ❌ Broken | ⚠️ X11 Only | ❌ Broken | 🟢 **100% Universal (`/dev/uinput`)** |
+| **Neural Swipe-to-Type** | ❌ None | ❌ None | ❌ None | 🟢 **FUTO Neural (1D-CNN + Transformer)** |
+| **Glowing Gesture Trail** | ❌ None | ❌ None | ❌ None | 🟢 **60 FPS Anti-Aliased Glow** |
+| **Continuous Terminal Chording** | ❌ Resets on Tap | ⚠️ Partial | ❌ Resets on Tap | 🟢 **Full Multi-Modifier Latching** |
+| **Wayland Focus Isolation** | ⚠️ Protocol-dependent | ❌ Focus Steals | ⚠️ Fixed Dock Only | 🟢 **Native (`WindowDoesNotAcceptFocus`)** |
+| **Dual Landscape/Portrait Profiles**| ❌ Stretches | ❌ None | ❌ None | 🟢 **Dedicated View Profiles & Calibration** |
+| **Tiling Scaling (25% to 125%)** | ❌ Fixed Bar | ⚠️ Clunky | ❌ Fixed Bar | 🟢 **Dynamic Corner Grip & Presets** |
+| **Glassmorphic Theming** | ❌ Plain Flat | ❌ 2000s Skeuomorphic | ❌ System Default | 🟢 **4 Curated Glassmorphic Themes** |
+
+---
+
+## 🌍 Portability & Hardware Matrix
 
 ### 🖥️ Desktop Environments & Compositors
-| Environment | Protocol | Status | Movement Method |
+| Environment | Protocol | Status | Window Movement Method |
 |---|---|---|---|
-| **KDE Plasma 6** | Wayland (KWin) | 🟢 Fully Supported (Primary) | `startSystemMove()` Native |
-| **KDE Plasma 5** | Wayland / X11 | 🟢 Fully Supported | `startSystemMove()` / X11 Move |
-| **GNOME 45 / 46+** | Wayland (Mutter) | 🟢 Fully Supported | `startSystemMove()` Native |
-| **Hyprland / Sway / Wayfire** | Wayland (wlroots) | 🟢 Fully Supported | Floating rule / Layer |
-| **Gamescope / SteamOS** | Wayland | 🟢 Fully Supported | Floating Overlay |
-| **X11 Standalone (i3/bspwm/XFCE)** | X11 | 🟢 Fully Supported | Manual Global Offset |
+| **KDE Plasma 6** | Wayland (KWin) | 🟢 **Primary Target** | Direct KWin DBus Scripting + `startSystemMove()` |
+| **KDE Plasma 5.27+** | Wayland / X11 | 🟢 Fully Supported | `startSystemMove()` / X11 Move |
+| **GNOME 45 / 46+** | Wayland (Mutter) | 🟢 Fully Supported | Native `startSystemMove()` |
+| **Hyprland / Sway / Wayfire** | Wayland (wlroots) | 🟢 Fully Supported | Floating window rule / Layer rule |
+| **SteamOS / Gamescope** | Wayland Handheld | 🟢 Fully Supported | Floating Overlay |
+| **X11 Standalone (i3/bspwm/XFCE)**| X11 | 🟢 Fully Supported | Native X11 event loop |
 
-### 📱 Target Devices & Architectures
-* **2-in-1 Tablets**: Dell Latitude 7320 Detachable, Microsoft Surface Pro series, ThinkPad X1 Fold, HP Spectre x360, Lenovo Yoga.
-* **Handheld PC Consoles**: Valve Steam Deck (LCD & OLED), ASUS ROG Ally, Lenovo Legion Go, GPD Win.
-* **Architectures**: `x86_64`, `aarch64` (ARM64 / Raspberry Pi / PineTab / Rockchip).
+### 📱 Supported Devices
+* **2-in-1 Tablet PCs**: Dell Latitude 7320/7210 Detachable, Microsoft Surface Pro series (Pro 4–10 / Go), Lenovo ThinkPad X1 Fold / Yoga, HP Spectre x360, Framework Laptop 13 Touch.
+* **Handheld PCs**: Valve Steam Deck (LCD & OLED), ASUS ROG Ally / Ally X, Lenovo Legion Go, GPD Win, OneXPlayer.
+* **ARM64 Devices**: Raspberry Pi 4 & 5 (Official Touchscreen), Pine64 PineTab 2, Rockchip RK3588 Tablets.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Touch Screen / Finger
-    participant UI as AuroraKeyboardWindow
-    participant Trail as SwipeTrailOverlay
-    participant Bar as CandidateBar
-    participant Client as FutoSwipeClient (IPC)
-    participant Daemon as futo_daemon (ExecuTorch)
-    participant Kernel as Linux Kernel (/dev/uinput)
-    participant App as Active App (Kitty / Neovim)
+flowchart TD
+    subgraph Input Layer
+        Touch[Touch Finger / Stylus] -->|Drag Gesture| Btn[SwipeKeyButton]
+        Touch -->|Tap Keystroke| Btn
+    end
 
-    User->>UI: Continuous drag across keys
-    UI->>Trail: add_point(x, y) [Draw Glowing Neon Trail]
-    User->>UI: Release Touch (Gesture Ends)
-    Trail->>Trail: start_fade() [Smooth 60 FPS Decay]
-    UI->>Client: predict(raw_trail, key_positions)
-    Client->>Daemon: Send JSON over /tmp/futo_swipe.sock
-    Daemon->>Daemon: 60Hz Resample + 1D-CNN + Transformer Decode (20ms)
-    Daemon-->>Client: Return top candidate words
-    Client-->>UI: ["well", "will", "wall"]
-    UI->>Kernel: Inject "well " via /dev/uinput (Auto-Commit)
-    Kernel-->>App: Hardware Key Events (Direct Typing)
-    UI->>Bar: Render [ ✓ well ] [ will ] [ wall ]
+    subgraph UI & Visual FX
+        Btn -->|Stroke Coordinates| Trail[SwipeTrailOverlay<br/>60 FPS Glowing Trail]
+        Btn -->|Candidate Click / Auto-Commit| Bar[CandidateBar<br/>Auto-Commit Chips & Toasts]
+    end
+
+    subgraph Gesture Decoding Pipeline
+        Btn -->|Raw Trail x,y,t| Client[FutoSwipeClient<br/>Unix Domain Socket]
+        Client -->|IPC /tmp/futo_swipe.sock| Daemon[futo_daemon<br/>1D-CNN + Transformer Inference]
+        Daemon -->|Candidate Words| Client
+        Client -->|Top Predictions| Bar
+        Btn -.->|Offline Fallback| Fallback[SHARK² Geometric Decoder]
+    end
+
+    subgraph Kernel Hardware Layer
+        Bar -->|Committed Text / Chords| Engine[KeyEngine<br/>evdev.UInput Device]
+        Btn -->|Direct Hardware Keycodes| Engine
+        Engine -->|EV_KEY Events| Kernel[/dev/uinput Virtual Keyboard/]
+        Kernel -->|Universal Hardware Typing| Apps[Kitty • Alacritty • Neovim • Firefox • Steam Games]
+    end
+
+    subgraph Window & Geometry Management
+        Screen[Screen Geometry & Rotation Watcher] --> GeoMgr[GeometryManager<br/>Landscape / Portrait View Profiles]
+        GeoMgr -->|Compositor Positioning| KWin[KWin Wayland DBus Scripting]
+        GeoMgr -->|Anti-Centering placement=1| KWinRules[~/.config/kwinrulesrc]
+    end
 ```
 
 ---
 
-## 📦 Quickstart
+## 🚀 Quickstart
 
-### 1. Prerequisites (x86_64 & ARM64)
-* Python 3.9+ with PyQt6 and evdev:
+### 1. Install Dependencies
+
+#### Fedora / Universal Blue / Bazzite / Aurora OS:
 ```bash
-# Fedora / RHEL / Bazzite / Aurora (x86_64 & aarch64):
 sudo dnf install python3-pyqt6 python3-evdev
-
-# Arch Linux & Asahi Linux ARM (Apple Silicon M1/M2/M3):
-sudo pacman -S python-pyqt6 python-evdev
-
-# Ubuntu / Debian / Raspberry Pi OS (Pi 4 & 5):
-sudo apt install python3-pyqt6 python3-evdev
-
-# Alpine Linux / PostmarketOS (PineTab / PinePhone):
-sudo apk add py3-qt6 py3-evdev
 ```
 
-### 2. Enable `/dev/uinput` Access (One-Time)
-To allow typing without running as root:
+#### Arch Linux / Manjaro / Asahi Linux (Apple Silicon):
 ```bash
+sudo pacman -S python-pyqt6 python-evdev
+```
+
+#### Ubuntu / Debian / Raspberry Pi OS:
+```bash
+sudo apt install python3-pyqt6 python3-evdev
+```
+
+---
+
+### 2. Enable `/dev/uinput` Access (One-Time Setup)
+To allow Aurora to type without requiring `sudo` / root permissions:
+
+```bash
+# Add your user to the input group:
 sudo usermod -aG input $USER
+
 # Or install the udev rule:
 echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/99-uinput.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
+*(Log out and log back in once for group changes to take effect).*
 
-### 3. Run the App
+---
+
+### 3. Clone & Install
+
 ```bash
-git clone https://github.com/your-username/aurora-keyboard.git
+git clone https://github.com/b0id/aurora-keyboard.git
 cd aurora-keyboard
 
-# Install desktop entry & autostart launcher:
+# Run installer (creates ~/.local/bin links, .desktop entry, and autostart entry):
 ./install.sh
 
-# Start the neural swipe daemon (runs standalone or in container):
+# Start the neural swipe daemon in background:
 ./aurora-futo-daemon &
 
-# Start the keyboard:
-./aurora-keyboard
+# Launch Aurora Touch Keyboard:
+aurora-keyboard
 ```
 
 ---
 
 ## 🎨 Themes & Customization
 
-Aurora ships with 4 tailored QSS glassmorphic themes:
+Aurora ships with 4 meticulously crafted glassmorphic themes:
 
-| Theme | Aesthetic | Gesture Trail Color |
-|---|---|---|
-| **Aurora Glass** (Default) | Deep Slate Glassmorphic Translucency | Cyan Neon (`#38bdf8`) |
-| **Cyber Neon** | Cyberpunk High-Contrast Dark | Neon Rose (`#f43f5e`) |
-| **OLED Dark** | Pitch Black Pure Contrast (Power Saver) | Crisp White (`#ffffff`) |
-| **Light Velvet** | Sleek Light Mode Surface | Sky Blue (`#0284c7`) |
+| Theme | Aesthetic | Neon Trail Color | Preview |
+|---|---|---|---|
+| **Aurora Glass** *(Default)* | Deep Slate Glassmorphic Translucency | Cyan Neon (`#38bdf8`) | Translucent blur with subtle border highlights |
+| **Cyber Neon** | Cyberpunk High-Contrast Dark | Neon Rose (`#f43f5e`) | High-visibility neon accents |
+| **OLED Dark** | Pitch Black Pure Contrast (Battery Saver) | Crisp White (`#ffffff`) | Absolute black for OLED displays |
+| **Light Velvet** | Sleek Light Mode Surface | Sky Blue (`#0284c7`) | Modern frosted light appearance |
 
-Switch themes on the fly from the title bar dropdown or launch directly:
+Switch themes live via the top action bar dropdown, or launch with a specific theme and layout:
 ```bash
-aurora-keyboard --theme "Cyber Neon" --layout "DEV/TERM"
+aurora-keyboard --theme "Cyber Neon" --layout "DEV"
+```
+
+---
+
+## ⚙️ Placement & Orientation Calibration Guide
+
+1. **Auto-Dock (Default)**: Aurora opens docked cleanly to the bottom of your screen.
+2. **Custom Placement in Landscape**:
+   - Drag the keyboard by the **`❖ Drag`** handle anywhere on screen.
+   - Resize it with the **`◢ Resize`** corner grip.
+   - Click **`📌 Set Default`** on the top action bar to lock your Landscape preset.
+3. **Custom Placement in Portrait**:
+   - Rotate your tablet to Portrait orientation.
+   - Drag and resize the keyboard to your preferred portrait position.
+   - Click **`📌 Set Default`** to lock your Portrait preset.
+4. Rotating your tablet will now seamlessly switch between your saved Landscape and Portrait profiles!
+
+---
+
+## 🧪 Test Suite
+
+Run the full automated unit and integration test suite:
+
+```bash
+python3 -m unittest discover -s tests -p "test_*.py"
 ```
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions from developers, designers, and tablet enthusiasts!
-
-1. **Swipe Trajectories**: Donate real $(x, y, t)$ swipe captures to expand gesture datasets.
-2. **Vocabulary & Slang**: Add specialized terminology, programming keywords, or localized dictionaries.
-3. **Compositor Profiles**: Test and tune layer-shell / window rules for Sway, Hyprland, and GNOME.
+Contributions are warmly welcomed! Feel free to submit issues, feature requests, or pull requests:
+* 💡 **Dictionary & Lexicons**: Add specialized terminology, developer keywords, or localized dictionaries.
+* 📱 **Compositor Profiles**: Help test and refine layer-shell rules for Sway, Hyprland, and GNOME.
+* 🎨 **New Themes**: Submit custom QSS glassmorphic colorways.
 
 ---
 
-## 📜 License & Copyleft Protection
+## 📜 License & Acknowledgements
 
-* **Aurora Keyboard Core**: Licensed under the **GNU General Public License v3.0 (GPL-3.0-or-later)**. Strong copyleft guarantees that any derivative works, forks, and commercial distributions must remain 100% free and open source.
+* **Aurora Touch Keyboard Core**: Licensed under the **GNU General Public License v3.0 (GPL-3.0-or-later)**. Strong copyleft guarantees that any derivative works and forks remain 100% free and open source.
 * **Neural Gesture Models**: Powered by [FUTO Swipe](https://github.com/futo-org) under the FUTO Model Weights License 1.0.
+
+<div align="center">
+  <sub>Built with ❤️ for the Linux Tablet & Handheld Community.</sub>
+</div>
