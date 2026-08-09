@@ -88,7 +88,7 @@ def main():
     if args.badge_only:
         window.hide_to_badge()
     else:
-        window.show()
+        window.show_keyboard()
 
     sys.exit(app.exec())
 

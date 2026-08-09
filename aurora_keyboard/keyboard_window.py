@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QLabel, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QScreen
+from PyQt6.QtGui import QScreen, QCloseEvent
 
 from .key_engine import KeyEngine
 from .layouts import QWERTY_ROWS, DEV_ROWS, NUMPAD_ROWS
@@ -97,6 +97,7 @@ class AuroraKeyboardWindow(QWidget):
         app = QApplication.instance()
         if app:
             app.primaryScreenChanged.connect(self._on_primary_screen_changed)
+            app.aboutToQuit.connect(self._on_about_to_quit)
 
         # Initial KWin rule synchronization
         self.geometry_mgr.sync_kwin_rules(self.geometry(), self._natural_height)
@@ -267,7 +268,7 @@ class AuroraKeyboardWindow(QWidget):
         close_btn.setFixedSize(28, 28)
         close_btn.setObjectName("close_btn")
         close_btn.setStyleSheet("background: rgba(239, 68, 68, 0.4); color: white;")
-        close_btn.clicked.connect(QApplication.instance().quit)
+        close_btn.clicked.connect(self.close)
         bar_layout.addWidget(close_btn)
 
         self.main_layout.addWidget(self.action_bar)
@@ -294,7 +295,7 @@ class AuroraKeyboardWindow(QWidget):
         self.setMaximumSize(max_w, max_h)
 
     def apply_orientation_geometry(self):
-        """Applies target geometry for the current orientation view."""
+        """Applies target geometry for the current orientation view and moves the window via KWin."""
         screen = QApplication.primaryScreen()
         if not screen:
             return
@@ -306,6 +307,9 @@ class AuroraKeyboardWindow(QWidget):
         self._programmatic_geometry = True
         self.setGeometry(x, y, w, h)
         self._programmatic_geometry = False
+
+        # Directly move on KWin Wayland compositor
+        self.geometry_mgr.set_window_geometry_kwin("Aurora Touch Keyboard Main", x, y, w, h)
         self.position_badge()
 
     def position_bottom(self):
@@ -316,6 +320,7 @@ class AuroraKeyboardWindow(QWidget):
         if screen:
             x, y = self.geometry_mgr.compute_badge_geometry(screen.availableGeometry())
             self.badge.move(x, y)
+            self.geometry_mgr.set_window_geometry_kwin("Aurora Touch Keyboard Badge", x, y, 160, 160)
 
     def sample_current_placement(self):
         """Programmatically samples the current geometry as the preset for this orientation view."""
@@ -326,7 +331,7 @@ class AuroraKeyboardWindow(QWidget):
         self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
         self.save_config_and_sync()
         if hasattr(self, 'candidate_bar'):
-            self.candidate_bar.show_toast(f"✓ Locked {orient.capitalize()} placement ({self.width()}×{self.height()} at {p.x()},{p.y()})")
+            self.candidate_bar.show_toast(f"✓ Locked {orient.capitalize()} preset ({self.width()}×{self.height()} at {p.x()},{p.y()})")
 
     def save_config_and_sync(self):
         self.geometry_mgr.current_theme = self.current_theme
@@ -357,14 +362,11 @@ class AuroraKeyboardWindow(QWidget):
         self._rotation_timer.start(400)
 
     def _handle_screen_change(self):
-        """Handles tablet orientation or resolution switch."""
+        """Handles tablet orientation or resolution switch seamlessly."""
         self._apply_min_max_size()
-        if self.isVisible():
-            self.hide()
-            self.apply_orientation_geometry()
-            self.show()
-        else:
-            self.position_badge()
+        self.apply_orientation_geometry()
+        self._update_responsive_typography()
+        self._update_toolbar_density()
         self.geometry_mgr.sync_kwin_rules(self.geometry(), self._natural_height)
 
     def resizeEvent(self, event):
@@ -392,6 +394,26 @@ class AuroraKeyboardWindow(QWidget):
             p = self.pos()
             self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
             self._save_timer.start(500)
+
+    def closeEvent(self, event: QCloseEvent):
+        """Ensures active window geometry is saved and synced upon closing."""
+        screen = QApplication.primaryScreen()
+        geom = screen.availableGeometry() if screen else None
+        orient = self.geometry_mgr.get_orientation_key(geom)
+        p = self.pos()
+        self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
+        self.save_config_and_sync()
+        event.accept()
+        QApplication.instance().quit()
+
+    def _on_about_to_quit(self):
+        screen = QApplication.primaryScreen()
+        geom = screen.availableGeometry() if screen else None
+        orient = self.geometry_mgr.get_orientation_key(geom)
+        p = self.pos()
+        if p.x() > 0 or p.y() > 0:
+            self.geometry_mgr.sample_and_set_profile(orient, p.x(), p.y(), self.width(), self.height(), self.dock_position)
+        self.geometry_mgr.save_config()
 
     def _update_responsive_typography(self):
         if not hasattr(self, 'keys_container') or not getattr(self, 'key_buttons', None):
@@ -450,6 +472,7 @@ class AuroraKeyboardWindow(QWidget):
         self._programmatic_geometry = True
         self.setGeometry(x, y, w, h)
         self._programmatic_geometry = False
+        self.geometry_mgr.set_window_geometry_kwin("Aurora Touch Keyboard Main", x, y, w, h)
         orient = self.geometry_mgr.get_orientation_key(geom)
         self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
         self._save_timer.start(500)
@@ -525,7 +548,7 @@ class AuroraKeyboardWindow(QWidget):
 
                 label = key_info.get("label", "")
                 if self.shift_active or self.caps_active:
-                    label = key_info.get("shift_label", label.upper() if len(label) == 1 else label)
+                    label = key_info.get("shift_label", label.upper() if len(base_label := label) == 1 else label)
 
                 display_label = label.replace("&", "&&") if ("&" in label and "&&" not in label) else label
                 btn.setText(display_label)

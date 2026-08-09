@@ -1,7 +1,7 @@
 """
 Geometry, View Profiles, and KWin Rule Synchronization Manager for Aurora Touch Keyboard.
 Handles screen orientation detection, per-view presets, geometry clamping,
-and programmatic placement sampling.
+programmatic placement sampling, and KWin Wayland compositor positioning.
 """
 
 import sys
@@ -9,6 +9,7 @@ import os
 import subprocess
 import json
 import configparser
+import tempfile
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any
 from PyQt6.QtWidgets import QApplication
@@ -19,7 +20,7 @@ KWIN_RULE_TITLE_MAIN = "Aurora Touch Keyboard Main"
 CONFIG_PATH = os.path.expanduser("~/.config/aurora-keyboard/config.json")
 
 # screen.availableGeometry() does not reliably exclude the Plasma taskbar for a
-# Force/Apply-positioned Tool window - measured directly via screenshot pixel sampling
+# Tool window - measured directly via screenshot pixel sampling
 # (taskbar top at physical y=1226 of 1280, ~45 logical px tall at 1.2 scale).
 BOTTOM_CLEARANCE = 55
 
@@ -53,7 +54,7 @@ class OrientationProfile:
 class GeometryManager:
     """
     Manages screen geometry, orientation view profiles (Landscape / Portrait),
-    geometry bounds clamping, and synchronization with KDE Plasma KWin Window Rules.
+    geometry bounds clamping, KWin compositor placement, and rule synchronization.
     """
 
     def __init__(self):
@@ -134,8 +135,8 @@ class GeometryManager:
     def sample_and_set_profile(self, orientation: str, x: int, y: int, w: int, h: int, dock_pos: str = "bottom"):
         """Programmatically sample and lock the given placement as the profile for an orientation."""
         self.profiles[orientation] = OrientationProfile(
-            pos=(x, y),
-            size=(w, h),
+            pos=(int(x), int(y)),
+            size=(int(w), int(h)),
             dock_position=dock_pos
         )
         self.position_mode = "remember"
@@ -217,9 +218,52 @@ class GeometryManager:
         except Exception as e:
             print(f"[GeometryManager] Config save error: {e}", file=sys.stderr)
 
-    def sync_kwin_rules(self, active_geom, natural_height: int = 360):
+    def set_window_geometry_kwin(self, window_title: str, x: int, y: int, w: int, h: int) -> bool:
         """
-        Synchronizes current orientation geometry into ~/.config/kwinrulesrc and reconfigures KWin.
+        Directly instructs the KWin Wayland compositor to reposition and resize the window.
+        Bypasses Wayland client limitations where QWidget.move() is ignored.
+        """
+        script = f"""
+        var windows = workspace.windowList();
+        for (var i = 0; i < windows.length; i++) {{
+            var win = windows[i];
+            if (win.caption && win.caption.indexOf("{window_title}") !== -1) {{
+                win.frameGeometry = {{ x: {int(x)}, y: {int(y)}, width: {int(w)}, height: {int(h)} }};
+            }}
+        }}
+        """
+        script_file = None
+        plugin_name = f"aurora_geo_{os.getpid()}_{int(x)}_{int(y)}"
+        try:
+            with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as f:
+                f.write(script)
+                script_file = f.name
+
+            res = subprocess.run(
+                ["qdbus-qt6", "org.kde.KWin", "/Scripting",
+                 "org.kde.kwin.Scripting.loadScript", script_file, plugin_name],
+                capture_output=True, text=True, timeout=2
+            )
+            sid = res.stdout.strip()
+            if sid and sid.isdigit():
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.run"], capture_output=True, timeout=2)
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", f"/Scripting/Script{sid}", "org.kde.kwin.Script.stop"], capture_output=True, timeout=2)
+                subprocess.run(["qdbus-qt6", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", plugin_name], capture_output=True, timeout=2)
+                return True
+        except Exception as err:
+            pass
+        finally:
+            if script_file and os.path.exists(script_file):
+                try:
+                    os.remove(script_file)
+                except Exception:
+                    pass
+        return False
+
+    def sync_kwin_rules(self, active_geom=None, natural_height: int = 360):
+        """
+        Synchronizes current orientation geometry and anti-centering placement rules
+        into ~/.config/kwinrulesrc and reconfigures KWin.
         """
         if not os.path.exists(KWIN_RULES_PATH):
             return
@@ -254,14 +298,19 @@ class GeometryManager:
             if badge_section:
                 kwrite(badge_section, "position", f"{badge_x},{badge_y}")
                 kwrite(badge_section, "positionrule", "2")  # Force badge corner position
+                kwrite(badge_section, "placement", "1")     # No placement policy (bypasses centering)
+                kwrite(badge_section, "placementrule", "2")
 
             if main_section:
                 kwrite(main_section, "position", f"{main_x},{main_y}")
-                # positionrule is Apply-once (3) to enable free touch dragging
+                # positionrule is Apply-once (3) to allow free touch dragging
                 kwrite(main_section, "positionrule", "3")
                 kwrite(main_section, "size", f"{main_w},{main_h}")
                 # sizerule is Apply-once (3) to allow dynamic corner resizing
                 kwrite(main_section, "sizerule", "3")
+                # placement=1 (None) prevents KWin from centering the window on show/remap!
+                kwrite(main_section, "placement", "1")
+                kwrite(main_section, "placementrule", "2")
 
             if badge_section or main_section:
                 subprocess.run(
