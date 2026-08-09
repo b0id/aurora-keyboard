@@ -262,10 +262,17 @@ class DragHandleLabel(QLabel):
     def mouseReleaseEvent(self, event):
         self._drag_start_global = None
         self._window_start_pos = None
-        if getattr(self.parent_window, 'position_mode', None) == "remember":
-            p = self.parent_window.pos()
-            self.parent_window.custom_pos = [p.x(), p.y()]
-            self.parent_window.save_config()
+        # moveEvent already tracks custom_pos live during the drag; sync it to
+        # the KWin rule IMMEDIATELY here rather than through the usual
+        # debounced path (positionrule is Force - see _sync_kwin_rules_to_
+        # screen - so as soon as the rule's stored position matches wherever
+        # this drag actually ended, there's nothing left for KWin to visibly
+        # snap back to; a 500ms-debounced sync would leave a window where the
+        # rule still points at the OLD position and Force would visibly
+        # snap back to it before catching up).
+        if self.parent_window.isVisible():
+            self.parent_window._save_timer.stop()
+            self.parent_window.save_config_and_sync()
         event.accept()
 
 
@@ -304,15 +311,20 @@ class TouchResizeGrip(QLabel):
     def mouseMoveEvent(self, event):
         if getattr(self, '_start_pos', None) is not None and getattr(self, '_start_size', None) is not None:
             delta = event.globalPosition().toPoint() - self._start_pos
-            screen = QApplication.primaryScreen()
-            max_w = screen.availableGeometry().width() if screen else 1920
-            max_h = screen.availableGeometry().height() if screen else 1280
-            new_w = max(360, min(max_w, self._start_size.width() + delta.x()))
-            new_h = max(95, min(max_h - 80, self._start_size.height() + delta.y()))
+            new_w = self._start_size.width() + delta.x()
+            new_h = self._start_size.height() + delta.y()
+            # No manual clamping here - the window's own minimumSize/maximumSize
+            # (see AuroraKeyboardWindow._apply_min_max_size) bound resize() the
+            # same way regardless of what triggered it, so there's one set of
+            # limits instead of a second copy that could drift out of sync.
             self.parent_window.resize(new_w, new_h)
             event.accept()
 
     def mouseReleaseEvent(self, event):
+        # No explicit finalize needed: AuroraKeyboardWindow.resizeEvent already
+        # switches to "remember" mode and persists on any non-programmatic
+        # resize, which covers both this drag and a native startSystemResize
+        # (which bypasses this widget's mouseMoveEvent entirely).
         self._start_pos = None
         self._start_size = None
         event.accept()
@@ -445,20 +457,37 @@ class SwipeKeyButton(QPushButton):
 class AuroraKeyboardWindow(QWidget):
     """Main Frameless On-Screen Keyboard Window."""
 
+    # Must be able to shrink to a quarter of the screen's width in either
+    # orientation (tiling use case) while staying tappable. Height floor is
+    # about touch-target legibility, not tiling, so it's a flat value instead
+    # of a fraction. These are the ONLY place size limits are defined - every
+    # resize path (grip, zoom buttons, presets, remembered geometry, the KWin
+    # rule sync) reads them via _size_bounds()/_clamp_size(), instead of each
+    # keeping its own copy that can silently drift out of agreement.
+    MIN_WIDTH_FRACTION = 0.25
+    MIN_WIDTH_FLOOR = 240
+    # 95 (the original value) let a manual grip-drag squash 5 key rows into
+    # illegible overlapping mush - measured what 5 rows actually need to stay
+    # tappable/legible and raised the floor accordingly. The scale presets no
+    # longer shrink height at all (see on_scale_preset_selected), so this floor
+    # now mainly guards a manual resize-grip drag rather than everyday use.
+    MIN_HEIGHT_FLOOR = 220
+
     def __init__(self):
         super().__init__()
         self.setObjectName("keyboard_root")
         self.setWindowTitle("Aurora Touch Keyboard Main")
         self.engine = KeyEngine()
-        
+
         self.shift_active = False
         self.caps_active = False
         self.active_modifiers = set()
-        
+
         self.current_layout_name = "QWERTY"
         self.current_theme = "Aurora Glass"
         self.dock_position = "bottom"
-        
+        self._programmatic_geometry = False
+
         self.load_config()
 
         self.badge = FloatingBadge(self)
@@ -498,17 +527,47 @@ class AuroraKeyboardWindow(QWidget):
         # (e.g. app was relaunched while already in portrait).
         self._sync_kwin_rules_to_screen()
 
+    def _orientation_key(self, geom=None):
+        """Landscape/portrait presets are kept separate because a single
+        remembered position/size doesn't translate well between them - a
+        spot picked for a wide-short window doesn't suit a narrow-tall one,
+        and vice versa. Determined by aspect, not a fixed rotation angle, so
+        it works the same regardless of which way the screen actually turns."""
+        if geom is None:
+            screen = QApplication.primaryScreen()
+            geom = screen.availableGeometry() if screen else None
+        if geom is None or geom.height() <= 0:
+            return "landscape"
+        return "landscape" if geom.width() >= geom.height() else "portrait"
+
     def load_config(self):
-        self.position_mode = "remember"
+        self.position_mode = "default"
         self.custom_size = None
         self.custom_pos = None
+        self.orientation_presets = {"landscape": None, "portrait": None}
         if os.path.exists(CONFIG_PATH):
             try:
                 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self.position_mode = data.get("position_mode", "remember")
-                    self.custom_size = data.get("custom_size", None)
-                    self.custom_pos = data.get("custom_pos", None)
+                    self.position_mode = data.get("position_mode", "default")
+                    presets = data.get("orientation_presets")
+                    if presets:
+                        for key in ("landscape", "portrait"):
+                            entry = presets.get(key)
+                            if entry and entry.get("pos") and entry.get("size"):
+                                self.orientation_presets[key] = {"pos": entry["pos"], "size": entry["size"]}
+                    else:
+                        # Migrating from the old single-preset format: seed
+                        # whichever orientation is currently active, since
+                        # that's presumably where this position/size came from.
+                        legacy_size = data.get("custom_size")
+                        legacy_pos = data.get("custom_pos")
+                        if legacy_size and legacy_pos:
+                            self.orientation_presets[self._orientation_key()] = {"pos": legacy_pos, "size": legacy_size}
+                    current = self.orientation_presets.get(self._orientation_key())
+                    if current:
+                        self.custom_pos = list(current["pos"])
+                        self.custom_size = list(current["size"])
                     if "theme" in data and data["theme"] in THEMES:
                         self.current_theme = data["theme"]
             except Exception as e:
@@ -517,11 +576,19 @@ class AuroraKeyboardWindow(QWidget):
     def save_config(self):
         try:
             os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            # self.custom_pos/custom_size are always "whatever's live right
+            # now" (every drag/resize writes here - see resizeEvent,
+            # moveEvent, _apply_custom_geometry, on_size_mode_changed); saving
+            # buckets that snapshot into whichever orientation is currently
+            # active, leaving the OTHER orientation's preset untouched.
+            if self.custom_pos and self.custom_size:
+                self.orientation_presets[self._orientation_key()] = {
+                    "pos": self.custom_pos, "size": self.custom_size,
+                }
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump({
                     "position_mode": self.position_mode,
-                    "custom_size": self.custom_size,
-                    "custom_pos": self.custom_pos,
+                    "orientation_presets": self.orientation_presets,
                     "theme": self.current_theme,
                     "layout": self.current_layout_name
                 }, f, indent=2)
@@ -532,13 +599,42 @@ class AuroraKeyboardWindow(QWidget):
         self.save_config()
         self._sync_kwin_rules_to_screen()
 
+    # Below this width, the action bar's ~16 controls physically can't fit -
+    # hide the least essential ones rather than let them overlap/clip.
+    TOOLBAR_DENSITY_THRESHOLD = 560
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, 'trail_overlay'):
             self.trail_overlay.setGeometry(self.rect())
         self._update_responsive_typography()
-        if getattr(self, 'position_mode', None) == "remember" and self.isVisible():
+        self._update_toolbar_density()
+        self._sync_scale_preset_label()
+        # Any resize that isn't this app's own programmatic geometry application
+        # (docking, a rotation reposition, _apply_custom_geometry) is a live user
+        # drag - including a native startSystemResize, which bypasses
+        # TouchResizeGrip's own mouseMoveEvent entirely and resizes the window
+        # directly via the compositor. Treat it the same way _apply_custom_geometry
+        # does: switch to "remember" so it sticks instead of reverting on the next
+        # reposition, and persist (debounced).
+        if self.isVisible() and not getattr(self, '_programmatic_geometry', False):
+            self.position_mode = "remember"
             self.custom_size = [self.width(), self.height()]
+            p = self.pos()
+            self.custom_pos = [p.x(), p.y()]
+            self._save_timer.start(500)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        # Same rationale as resizeEvent above: any move that isn't this app's
+        # own programmatic geometry application is a live user drag - via the
+        # drag handle's startSystemMove(), its manual-fallback path, or
+        # clicking the window body directly - and should stick instead of
+        # reverting on the next reposition (positionrule is intentionally
+        # Apply-once, not Force - see _sync_kwin_rules_to_screen - so nothing
+        # else keeps a drag from being silently discarded).
+        if self.isVisible() and not getattr(self, '_programmatic_geometry', False):
+            self.position_mode = "remember"
             p = self.pos()
             self.custom_pos = [p.x(), p.y()]
             self._save_timer.start(500)
@@ -547,17 +643,78 @@ class AuroraKeyboardWindow(QWidget):
         if not hasattr(self, 'keys_container') or not getattr(self, 'key_buttons', None):
             return
         total_h = self.keys_container.height()
-        if total_h > 20:
-            row_h = total_h / 5.0
+        num_rows = self.keys_layout.count()
+        if total_h > 20 and num_rows > 0:
+            # Subtract inter-row spacing before dividing - treating the full
+            # container height as available to the rows (ignoring the 4px gaps
+            # between them) overestimated each row's real budget, so the
+            # min-height set below could exceed what a row actually had to give
+            # it. The button was then taller than its own parent row widget,
+            # which clips it - the visible symptom was rounded top corners but
+            # flat-cut bottom ones, where the clip line fell.
+            spacing_total = self.keys_layout.spacing() * max(0, num_rows - 1)
+            row_h = (total_h - spacing_total) / num_rows
             font_px = max(8, min(int(row_h * 0.42), 22))
             padding_px = 0 if row_h < 25 else 2
+            # Every theme's base QPushButton rule fixes min-height at 48px
+            # (styles.py). At small scales the window is shorter than 5 rows *
+            # 48px, so without overriding it here the layout can't satisfy every
+            # button's minimum and rows overlap/clip - which is what made key
+            # labels disappear entirely at 50%/25%. Apply to ALL keys, not just
+            # "char" ones - Tab/Shift/Enter/Ctrl/Space/arrows are still fixed at
+            # 48px otherwise and don't shrink with everything else.
+            #
+            # Height is set via setFixedHeight(), NOT the "min-height" QSS
+            # property above - QSS min-height turned out to be a hint the native
+            # widget style can still override with its own font-metrics-based
+            # content minimum, so the button ended up taller than its own parent
+            # row widget and got clipped by it (rounded top corners, flat-cut
+            # bottom ones, since that's where the clip line fell). setFixedHeight
+            # is a hard Qt-level constraint the style can't override.
+            min_h_px = max(14, int(row_h) - 2)
+            style = f"font-size: {font_px}px; padding: {padding_px}px 0px;"
             for btn in self.key_buttons:
-                info = getattr(btn, 'key_info', None)
-                if info and info.get("type") == "char":
-                    btn.setStyleSheet(f"font-size: {font_px}px; padding: {padding_px}px 0px;")
+                btn.setStyleSheet(style)
+                btn.setFixedHeight(min_h_px)
+
+    def _update_toolbar_density(self):
+        """Below TOOLBAR_DENSITY_THRESHOLD, the action bar's ~16 controls can't
+        all fit - hide the ones that are safe to lose (dock toggle, layout
+        picker, theme picker) rather than let them overlap illegibly. Resize
+        grip, drag handle, zoom controls, size mode, and minimize/close always
+        stay - explicitly requested, since those are needed at any size."""
+        if not all(hasattr(self, attr) for attr in ('dock_btn', 'layout_box', 'theme_box')):
+            return
+        roomy = self.width() >= self.TOOLBAR_DENSITY_THRESHOLD
+        self.dock_btn.setVisible(roomy)
+        self.layout_box.setVisible(roomy)
+        self.theme_box.setVisible(roomy)
+
+    _SCALE_PRESETS = (
+        ("25% (Mini)", 0.25), ("50% (1/4 Tile)", 0.50), ("75% (Compact)", 0.75),
+        ("100% (Standard)", 1.0), ("125% (Large)", 1.25),
+    )
+
+    def _sync_scale_preset_label(self):
+        """Keep the preset dropdown showing whatever percentage the current
+        width actually is, regardless of how it got there (+/- buttons, the
+        resize grip, or the dropdown itself) - otherwise the dropdown shows a
+        stale label the moment any other control changes the size."""
+        screen = QApplication.primaryScreen()
+        if not screen or not hasattr(self, 'scale_preset_box'):
+            return
+        base_w = int(screen.availableGeometry().width() * 0.95)
+        if base_w <= 0:
+            return
+        fraction = self.width() / base_w
+        closest_label = min(self._SCALE_PRESETS, key=lambda p: abs(p[1] - fraction))[0]
+        if self.scale_preset_box.currentText() != closest_label:
+            self.scale_preset_box.blockSignals(True)
+            self.scale_preset_box.setCurrentText(closest_label)
+            self.scale_preset_box.blockSignals(False)
 
     def on_size_mode_changed(self, text):
-        if "Default" in text:
+        if "Auto-Dock" in text:
             self.position_mode = "default"
             self.position_bottom()
         else:
@@ -567,64 +724,87 @@ class AuroraKeyboardWindow(QWidget):
             self.custom_pos = [p.x(), p.y()]
         self.save_config_and_sync()
 
-    def scale_keyboard(self, factor: float):
+    def _size_bounds(self, geom):
+        """Single source of truth for min/max keyboard size, in terms of the
+        given available-screen rect. Everything that constrains size - Qt's own
+        minimumSize/maximumSize, the remembered-geometry clamp, and the KWin
+        rule sync - reads from here instead of keeping its own copy."""
+        min_w = max(self.MIN_WIDTH_FLOOR, int(geom.width() * self.MIN_WIDTH_FRACTION))
+        min_h = self.MIN_HEIGHT_FLOOR
+        max_w = max(min_w, geom.width() - 20)
+        max_h = max(min_h, geom.height() - BOTTOM_CLEARANCE - 20)
+        return min_w, min_h, max_w, max_h
+
+    def _clamp_size(self, w, h, geom):
+        min_w, min_h, max_w, max_h = self._size_bounds(geom)
+        return max(min_w, min(max_w, w)), max(min_h, min(max_h, h))
+
+    def _clamp_position(self, x, y, w, h, geom):
+        x = max(geom.x() + 10, min(geom.x() + geom.width() - w - 10, x))
+        y = max(geom.y() + 10, min(geom.y() + geom.height() - h - BOTTOM_CLEARANCE, y))
+        return x, y
+
+    def _apply_min_max_size(self):
+        """Set real Qt/Wayland min/max size hints so the bounds hold even for a
+        native compositor-driven resize (startSystemResize), which bypasses
+        this app's own drag math entirely and would otherwise ignore it."""
+        screen = QApplication.primaryScreen()
+        if not screen:
+            return
+        min_w, min_h, max_w, max_h = self._size_bounds(screen.availableGeometry())
+        self.setMinimumSize(min_w, min_h)
+        self.setMaximumSize(max_w, max_h)
+
+    def _apply_custom_geometry(self, x, y, w, h):
+        """Single entry point for every manual resize (grip, zoom buttons,
+        presets): clamps to the current screen, switches to 'remember' mode so
+        the change actually sticks instead of reverting on the next reposition,
+        and persists via the debounced save+sync."""
         screen = QApplication.primaryScreen()
         geom = screen.availableGeometry() if screen else None
-        max_w = geom.width() if geom else 1920
-        max_h = geom.height() if geom else 1280
-        base_w = int(max_w * 0.95) if not geom else int(geom.width() * 0.95)
-        base_h = 409
-        min_w = int(base_w * 0.25)
-        min_h = int(base_h * 0.25)
-        
-        cur_w = self.width()
-        cur_h = self.height()
-        new_w = max(min_w, min(max_w - 20, int(cur_w * factor)))
-        new_h = max(min_h, min(max_h - BOTTOM_CLEARANCE - 20, int(cur_h * factor)))
-        
+        if geom:
+            w, h = self._clamp_size(w, h, geom)
+            x, y = self._clamp_position(x, y, w, h, geom)
+        self._programmatic_geometry = True
+        self.setGeometry(x, y, w, h)
+        self._programmatic_geometry = False
+        self.position_mode = "remember"
+        self.custom_size = [self.width(), self.height()]
+        p = self.pos()
+        self.custom_pos = [p.x(), p.y()]
+        self._save_timer.start(500)
+
+    def scale_keyboard(self, factor: float):
+        """The +/- buttons and the preset dropdown must agree on what "size"
+        means, or picking a preset then nudging with +/- (or vice versa)
+        produces a size that matches neither - which is what made the two
+        controls look disconnected. Same rule as presets: only width changes,
+        height stays natural."""
         cur_pos = self.pos()
-        new_x = max(10, min(max_w - new_w - 10, cur_pos.x()))
-        new_y = max(10, min(max_h - new_h - BOTTOM_CLEARANCE, cur_pos.y()))
-        
-        self.setGeometry(new_x, new_y, new_w, new_h)
-        if self.position_mode == "remember":
-            self.custom_size = [new_w, new_h]
-            self.custom_pos = [new_x, new_y]
-            self.save_config()
+        new_w = int(self.width() * factor)
+        natural_h = getattr(self, '_natural_height', None) or self.sizeHint().height()
+        self._apply_custom_geometry(cur_pos.x(), cur_pos.y(), new_w, natural_h)
 
     def on_scale_preset_selected(self, text: str):
+        """These presets are about fitting into a narrower tiled column, not
+        about shrinking every direction - the keyboard's natural height already
+        comfortably fits within half of either orientation's screen height, so
+        there's nothing to gain by shrinking it too. Only width scales with the
+        selected percentage; height stays at its natural size regardless (still
+        manually adjustable with the resize grip, which has its own floor)."""
         screen = QApplication.primaryScreen()
         if not screen:
             return
         geom = screen.availableGeometry()
         base_w = int(geom.width() * 0.95)
-        base_h = 409
-        
-        if "25%" in text:
-            target_w = int(base_w * 0.25)
-            target_h = int(base_h * 0.25)
-        elif "50%" in text:
-            target_w = int(base_w * 0.50)
-            target_h = int(base_h * 0.50)
-        elif "75%" in text:
-            target_w = int(base_w * 0.75)
-            target_h = int(base_h * 0.75)
-        elif "125%" in text:
-            target_w = min(geom.width() - 20, int(base_w * 1.25))
-            target_h = int(base_h * 1.25)
-        else:
-            target_w = base_w
-            target_h = base_h
-            
-        cur_pos = self.pos()
-        target_x = max(geom.x() + 10, min(geom.x() + geom.width() - target_w - 10, cur_pos.x()))
-        target_y = max(geom.y() + 10, min(geom.y() + geom.height() - target_h - BOTTOM_CLEARANCE, cur_pos.y()))
+        natural_h = getattr(self, '_natural_height', None) or self.sizeHint().height()
 
-        self.setGeometry(target_x, target_y, target_w, target_h)
-        if self.position_mode == "remember":
-            self.custom_size = [target_w, target_h]
-            self.custom_pos = [target_x, target_y]
-            self.save_config()
+        # startswith, not "in" - "25%" is a substring of "125% (Large)" too
+        fraction = next((f for label, f in self._SCALE_PRESETS if text.startswith(label.split()[0])), 1.0)
+        target_w = int(base_w * fraction)
+
+        cur_pos = self.pos()
+        self._apply_custom_geometry(cur_pos.x(), cur_pos.y(), target_w, natural_h)
 
     def apply_flags(self):
         self.setWindowFlags(
@@ -1016,6 +1196,16 @@ class AuroraKeyboardWindow(QWidget):
         self.badge.setStyleSheet(css)
         if hasattr(self, 'trail_overlay'):
             self.trail_overlay.set_theme(theme_name)
+        # Cache the natural (unshrunk) height now that the theme's real font
+        # size / min-height CSS is actually applied to the current buttons -
+        # measuring any earlier (e.g. right after build_keys(), before any
+        # stylesheet exists) would capture Qt's bare default button metrics
+        # instead of the real themed size. Used as the "100%" reference by
+        # on_scale_preset_selected/_dock_geometry instead of a live sizeHint(),
+        # which would otherwise drift smaller every time a shrink already
+        # applied a smaller min-height override to these same button objects.
+        if hasattr(self, 'key_buttons'):
+            self._natural_height = self.sizeHint().height()
 
     def _badge_geometry(self, geom):
         """Bottom-right-corner (x, y) for the badge within an available-screen rect.
@@ -1028,22 +1218,23 @@ class AuroraKeyboardWindow(QWidget):
 
     def _dock_geometry(self, geom):
         """Derives docked or remembered (x, y, width, height) for the main window
-        within an available-screen rect."""
-        if getattr(self, 'position_mode', None) == "remember" and getattr(self, 'custom_size', None):
-            width, height = self.custom_size
-            width = max(360, min(geom.width() - 20, width))
-            height = max(95, min(geom.height() - BOTTOM_CLEARANCE - 20, height))
-            if getattr(self, 'custom_pos', None):
-                raw_x, raw_y = self.custom_pos
-                x = max(geom.x() + 10, min(geom.x() + geom.width() - width - 10, raw_x))
-                y = max(geom.y() + 10, min(geom.y() + geom.height() - height - BOTTOM_CLEARANCE, raw_y))
-            else:
-                x = geom.x() + int((geom.width() - width) / 2)
-                y = geom.y() + geom.height() - height - BOTTOM_CLEARANCE
-            return x, y, width, height
+        within an available-screen rect. 'remember' replays whichever
+        orientation preset (see _orientation_key) matches this geom - landscape
+        and portrait are remembered independently, since a position/size that
+        suits one doesn't suit the other - clamped to the current screen via
+        the same _clamp_size/_clamp_position every other resize path uses.
+        Otherwise this is the original default: 95%-width, sizeHint()-height,
+        bottom-docked and centered - unchanged from before the resize/toggle
+        features existed."""
+        if getattr(self, 'position_mode', None) == "remember":
+            preset = getattr(self, 'orientation_presets', {}).get(self._orientation_key(geom))
+            if preset:
+                width, height = self._clamp_size(preset["size"][0], preset["size"][1], geom)
+                x, y = self._clamp_position(preset["pos"][0], preset["pos"][1], width, height, geom)
+                return x, y, width, height
 
         width = int(geom.width() * 0.95)
-        height = self.sizeHint().height()
+        height = getattr(self, '_natural_height', None) or self.sizeHint().height()
         x = geom.x() + int((geom.width() - width) / 2)
         y = geom.y() + geom.height() - height - BOTTOM_CLEARANCE
         return x, y, width, height
@@ -1057,8 +1248,11 @@ class AuroraKeyboardWindow(QWidget):
     def position_bottom(self):
         screen = QApplication.primaryScreen()
         if screen:
+            self._apply_min_max_size()
             x, y, width, height = self._dock_geometry(screen.availableGeometry())
+            self._programmatic_geometry = True
             self.setGeometry(x, y, width, height)
+            self._programmatic_geometry = False
             self.position_badge()
 
     def _watch_screen(self, screen):
@@ -1080,9 +1274,32 @@ class AuroraKeyboardWindow(QWidget):
         self._rotation_timer.start(400)
 
     def _handle_screen_change(self):
+        # positionrule is Apply-once (3), not Force - dragging needs Apply-
+        # once (see _sync_kwin_rules_to_screen), which costs us live position
+        # updates on rotation: Wayland lets a client set its own SIZE
+        # directly regardless of rule strength, so that still follows a
+        # rotation correctly via the hide()+show() remap below, but POSITION
+        # is exclusively the compositor's call and Apply-once doesn't
+        # reliably re-fire on that remap - it falls back to KWin's own
+        # default (centered) placement instead. Known limitation for now;
+        # dragging matters more day to day. The correct per-orientation
+        # target is still written into the rule file below either way (via
+        # _dock_geometry's per-orientation preset lookup), so a manual drag
+        # right after rotating, or the next full relaunch, lands correctly.
         self._sync_kwin_rules_to_screen()
+        self._apply_min_max_size()
+        # Refresh the live custom_pos/custom_size to whatever preset matches
+        # the NEW orientation, so a drag/resize right after rotating updates
+        # that orientation's preset instead of overwriting it with stale
+        # values carried over from the orientation just left.
+        preset = getattr(self, 'orientation_presets', {}).get(self._orientation_key())
+        if preset:
+            self.custom_pos = list(preset["pos"])
+            self.custom_size = list(preset["size"])
         if self.isVisible():
+            self.hide()
             self.position_bottom()
+            self.show()
         else:
             self.position_badge()
 
@@ -1120,18 +1337,31 @@ class AuroraKeyboardWindow(QWidget):
                 kwrite(badge_section, "position", f"{badge_x},{badge_y}")
             if main_section:
                 kwrite(main_section, "position", f"{main_x},{main_y}")
+                # Apply-once (3), not Force (2). Force was tried twice this
+                # session to make rotation reposition the window live - it
+                # does, reliably (confirmed via an isolated test window, see
+                # WINDOW_RULES.md) - but a Force position rule also appears to
+                # block KWin's interactive move grab outright, not just snap
+                # back after a drag: syncing the rule to match on every
+                # drag-release (still done below, in DragHandleLabel/
+                # AuroraKeyboardWindow.mouseReleaseEvent - harmless and still
+                # useful for the next remap) did not bring dragging back.
+                # Dragging is the more load-bearing feature, so this stays
+                # Apply-once; a rotation currently only reliably updates SIZE
+                # live (Wayland lets a client set that directly regardless of
+                # rule strength) and falls back to KWin's own default
+                # placement for position. Revisit with a heavier fix (fully
+                # recreating the window on rotation, forcing a genuine new
+                # xdg_toplevel mapping) in a future session if needed.
                 kwrite(main_section, "positionrule", "3")
                 kwrite(main_section, "size", f"{main_w},{main_h}")
+                # sizerule deliberately stays Apply-once (3), not Force (2): a
+                # continuously-reasserted Force *size* rule caused the main
+                # window to intermittently steal input focus while typing -
+                # this app's only input method, so that regression outweighs
+                # live-resizing on rotation. Size only catches up at the next
+                # real (re)map: minimize-to-badge-and-restore, or a relaunch.
                 kwrite(main_section, "sizerule", "3")
-                # Deliberately NOT forcing sizerule to "2" (Force) here. That was
-                # tried to make a rotation-driven resize apply live, but a
-                # continuously-reasserted Force size rule turned out to cause the
-                # main window to intermittently steal input focus while typing -
-                # this app's only input method, so that regression outweighs the
-                # convenience. Left at whatever it already is (originally "3",
-                # Apply-once) - position still updates live (positionrule stays
-                # Force, unaffected), but the new size only takes effect at the
-                # next real (re)map: minimize-to-badge-and-restore, or a relaunch.
 
             if badge_section or main_section:
                 subprocess.run(
@@ -1173,4 +1403,10 @@ class AuroraKeyboardWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
+        # Same immediate (non-debounced) sync as DragHandleLabel.mouseReleaseEvent
+        # - see the comment there for why this needs to happen right away
+        # rather than through the usual debounced path.
+        if self.isVisible():
+            self._save_timer.stop()
+            self.save_config_and_sync()
         event.accept()
