@@ -155,7 +155,7 @@ def decode_swipe(raw_trail, key_positions, top_n=5):
 
             # Score dictionary candidates
             candidates = []
-            pool = _VOCAB[:15000] if _VOCAB else []
+            pool = _VOCAB if _VOCAB else []
             
             for word in pool:
                 if len(word) < 2:
