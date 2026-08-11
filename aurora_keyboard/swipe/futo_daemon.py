@@ -25,12 +25,21 @@ SOCKET_PATH = "/tmp/futo_swipe.sock"
 try:
     from .lexicon import get_lexicon
     from .beam_search import ScoringParams, decode as beam_decode
+    from .context_lm import load_context_lm
 except ImportError:
     from lexicon import get_lexicon
     from beam_search import ScoringParams, decode as beam_decode
+    from context_lm import load_context_lm
 
 # Published encoder-only constants (scoring.json, VOCAB_CONTEXT_SPEC.md sec6.1)
 _SCORING = ScoringParams()
+# Published encoder+contextlm alpha weight (scoring.json) - only applied
+# when a request actually supplies context and the context LM loaded.
+_CONTEXT_ALPHA = 0.6459
+# How many beam-search candidates to rerank with the context LM. Wider
+# than top_n so a context-boosted word ranked just outside top_n can still
+# surface, without rescoring the entire vocabulary.
+_RERANK_POOL = 20
 
 
 def _canonical_key_positions():
@@ -48,6 +57,7 @@ def _canonical_key_positions():
 # Try loading ExecuTorch models
 _ENCODER = None
 _LEXICON = None
+_CONTEXT_LM = None
 
 try:
     import torch
@@ -66,6 +76,19 @@ try:
     print(f"[FUTO Daemon] Successfully loaded honorable_sturgeon encoder + {len(_LEXICON.vocabulary)} vocabulary words (shared lexicon.py).", flush=True)
 except Exception as err:
     print(f"[FUTO Daemon Warning] Neural models could not be loaded: {err}", file=sys.stderr, flush=True)
+
+# Context LM (Milestone 3b, VOCAB_CONTEXT_SPEC.md sec6.1 alpha term) - a
+# separate optional model. Failure here degrades gracefully to no context
+# scoring (same pattern as the encoder above), never breaks core decoding.
+try:
+    pte_ctx = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/context_lm.pte")
+    ctx_vocab_path = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt")
+    with open(ctx_vocab_path, "r", encoding="utf-8") as f:
+        _ctx_vocab_words = [line.rstrip("\n").rstrip("\r") for line in f]
+    _CONTEXT_LM = load_context_lm(lambda: Runtime.get().load_program(pte_ctx), _ctx_vocab_words)
+    print(f"[FUTO Daemon] Successfully loaded hungry_jellyfish context LM ({_CONTEXT_LM.num_exact} exact embeddings).", flush=True)
+except Exception as err:
+    print(f"[FUTO Daemon Warning] Context LM could not be loaded: {err}", file=sys.stderr, flush=True)
 
 
 def _resample(px, py, pt, T=64):
@@ -93,7 +116,25 @@ def _compact_log_probs(log_emissions, letters):
     return np.concatenate([letter_cols, blank_col], axis=1)
 
 
-def decode_swipe(raw_trail, key_positions, top_n=5):
+def _rerank_with_context(results, context, top_n):
+    """Blend the context LM's alpha-weighted log-likelihood into a beam
+    search candidate pool (VOCAB_CONTEXT_SPEC.md sec6.1's alpha term),
+    then re-truncate to top_n. No-op if the context LM isn't loaded or no
+    context was supplied - same candidates, same order, just not reranked."""
+    if _CONTEXT_LM is None or not context or not results:
+        return [word for word, _ in results[:top_n]]
+
+    words = [word for word, _ in results]
+    lm_scores = _CONTEXT_LM.score(context, words)
+    blended = [
+        (word, beam_score + _CONTEXT_ALPHA * lm_score)
+        for (word, beam_score), lm_score in zip(results, lm_scores)
+    ]
+    blended.sort(key=lambda pair: -pair[1])
+    return [word for word, _ in blended[:top_n]]
+
+
+def decode_swipe(raw_trail, key_positions, top_n=5, context=None):
     """Decode a swipe trajectory using FUTO encoder + frequency-ranked vocabulary."""
     if not raw_trail or len(raw_trail) < 2:
         return []
@@ -145,8 +186,9 @@ def decode_swipe(raw_trail, key_positions, top_n=5):
             # decode comes out garbled (Milestone 1 measured 35.5% top-1;
             # see VOCAB_CONTEXT_SPEC.md sec2.1 for the full comparison).
             log_probs = _compact_log_probs(log_emissions, letters_sorted)
-            results = beam_decode(log_probs, _LEXICON.trie, _SCORING, beam_width=100, top_k=top_n)
-            return [word for word, _ in results]
+            pool_size = _RERANK_POOL if (context and _CONTEXT_LM is not None) else top_n
+            results = beam_decode(log_probs, _LEXICON.trie, _SCORING, beam_width=100, top_k=pool_size)
+            return _rerank_with_context(results, context, top_n)
         except Exception as err:
             print(f"[FUTO Daemon] Error in neural decode: {err}", file=sys.stderr, flush=True)
 
@@ -171,9 +213,10 @@ def handle_client(conn):
         raw_trail = req.get("raw_trail", [])
         key_positions = req.get("key_positions", {})
         top_n = req.get("top_n", 5)
+        context = req.get("context") or []  # optional (VOCAB_CONTEXT_SPEC.md sec3)
 
         t0 = time.time()
-        candidates = decode_swipe(raw_trail, key_positions, top_n)
+        candidates = decode_swipe(raw_trail, key_positions, top_n, context)
         latency_ms = (time.time() - t0) * 1000.0
 
         resp = {

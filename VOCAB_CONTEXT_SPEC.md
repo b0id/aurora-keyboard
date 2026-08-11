@@ -397,6 +397,26 @@ Before landing this, the beam search was validated against FUTO's own published 
 
 Implementation: `aurora_keyboard/swipe/trie.py` (prefix trie, Zipf-shaped frequency proxy) and `aurora_keyboard/swipe/beam_search.py` (the ported algorithm) are both headlessly unit-tested (`tests/test_trie.py`, `tests/test_beam_search.py`, 20 tests) and verified standalone before being wired into `futo_daemon.py` and `lexicon.py`'s `Lexicon.trie`, per §9. Full regression suite (37 tests: `test_swipe_e2e.py`, `test_lexicon.py`, `test_trie.py`, `test_beam_search.py`) passes clean, plus `selftest.py`.
 
+### Measured Results (Milestone 3b, daemon side, 2026-08-11)
+
+The context LM's real I/O contract (`num_exact=32768`, `embed_dim=16`, `num_buckets=32768`, `max_context_len=16`) isn't published anywhere - discovered by loading the actual model and reading tensor shapes / resize-error messages, then sanity-checked against known-good language behavior before any production code was written:
+
+| Context | Top predicted next words |
+| :--- | :--- |
+| `["the"]` | first, new, same, other, most |
+| `["thank", "you"]` | for, to, in, and, at |
+| `["how", "are"]` | you, we, the, they, it |
+
+Then the actual disambiguation term (α·s_LM, the real fix for §2 root cause #4) was checked against the spec's own named example:
+
+| Context | Candidates | Scores |
+| :--- | :--- | :--- |
+| `["critical"]` | infrastructure vs. instructor | **-0.21** vs. -4.14 — correct word wins clearly |
+
+The `vocab_hash.py` port (wyhash + multiply-shift, used for out-of-vocabulary word embedding lookup) was cross-checked **bit-exact** against FUTO's real C++ header — compiled locally with `g++`, run side-by-side with the Python port on 10 test words, identical 64-bit hash values and bucket indices on every one (an initial port had a real bug here: Python's arbitrary-precision integers don't wrap at 64 bits the way C++'s `uint64_t` does, silently producing wrong bucket indices until the wraparound was added explicitly — caught by this cross-check, not by inspection).
+
+End-to-end (live socket, daemon side only): no-context requests are byte-for-byte identical to Milestone 3a (zero regression), old-protocol requests without a `context` field still work (backward compatible), and a context-supplied request measurably reranks candidates with ~2ms added latency (~14ms → ~16ms). The Milestone 1 harness (which sends no context) is unaffected: still 100%/100%.
+
 ---
 
 ## 8. (reserved)
@@ -493,17 +513,42 @@ This section exists because Aurora is the user's **only working input method** o
 │     memory target) in §7 "Measured Results (Milestone 3a)".                │
 │   • 37-test regression suite + selftest.py verified clean.                 │
 │                                                                              │
-│ 3b. Context LM integration (the real context-awareness piece)               │
-│   • Download hungry_jellyfish/context_lm.pte alongside the existing vocab   │
-│   • Add RollingTokenContext to keyboard_window.py at the two confirmed hook │
-│     points (§4) — candidate_bar.set_candidates() and handle_key_click()     │
-│   • Wire RollingTokenContext.get_context() → α·s_LM term in Equation 3,     │
-│     using published encoder+contextlm constants (α=0.6459) as a starting    │
-│     point, re-tuned against Milestone 1's harness                           │
-│   • Add test_context_token_buffer.py + a context-disambiguation eval        │
-│     (replaces the planned test_bigram_scoring.py - no bigram table to test) │
-│   • Hook custom_words.txt hot-reloading through lexicon.py's already-built   │
-│     reload_lexicon() (§5.2) - infra exists since Milestone 2, just unused   │
+│ 3b. Context LM integration — daemon side DONE 2026-08-11, live-app hook     │
+│     intentionally not yet wired (see below)                                │
+│   • Validated first, before writing production code: probed the real       │
+│     hungry_jellyfish model's I/O shapes empirically (no metadata.json      │
+│     covers these) - num_exact=32768, embed_dim=16, num_buckets=32768,      │
+│     max_context_len=16 - then checked predict-next-word sanity ("how are"  │
+│     -> "you" ranked first, "thank you" -> "for") before trusting it.       │
+│   • New aurora_keyboard/swipe/vocab_hash.py (wyhash + multiply-shift OOV    │
+│     bucket hashing) - cross-checked BIT-EXACT against FUTO's actual C++    │
+│     header, compiled and run locally, not just read. 10 fixture-vector     │
+│     tests (tests/test_vocab_hash.py) lock this in as a regression guard.   │
+│   • New aurora_keyboard/swipe/context_lm.py (ContextLMScorer) and          │
+│     rolling_context.py (RollingTokenContext, §4) - both headlessly tested  │
+│     (13 tests) before any wiring, per §9.                                  │
+│   • futo_daemon.py: loads the context LM alongside the encoder (separate   │
+│     try/except - failure degrades gracefully, same pattern as encoder).    │
+│     decode_swipe/handle_client gained an optional `context` field (empty   │
+│     by default - old protocol still works unchanged). When context is      │
+│     supplied, beam search returns a wider pool (20 vs top_n) that gets     │
+│     reranked by beam_score + α·context_lm_score (α=0.6459 published        │
+│     constant) before final truncation.                                    │
+│   • Verified live: "critical" context correctly boosts "infrastructure"    │
+│     over "instructor" (-0.21 vs -4.14, the exact disambiguation example    │
+│     named in §7's Context Disambiguation Rate metric). No-context and      │
+│     old-protocol requests unaffected (confirmed byte-for-byte identical    │
+│     candidates). Latency: ~14ms -> ~16ms with reranking (+2ms).            │
+│   • 55-test full regression suite + selftest.py + Milestone 1 harness      │
+│     (still 100%/100%, unaffected since it sends no context) all clean.     │
+│   • NOT DONE: the live-app hook. keyboard_window.py needs to instantiate   │
+│     RollingTokenContext and call push_word()/handle_key() at the two       │
+│     confirmed hook points (§4), and futo_client.py/manager.py need to      │
+│     thread a context list through predict()/decode() to the daemon. This  │
+│     is deliberately held for explicit go-ahead before touching             │
+│     keyboard_window.py, per §9's extra caution on that specific file.      │
+│   • Still open: custom_words.txt hot-reload hookup through lexicon.py's    │
+│     already-built reload_lexicon() (§5.2) - infra exists, unused so far.   │
 │                                                                              │
 │ 3c. (Optional, smaller win) magic_macaw decoder refinement                  │
 │   • FUTO's own numbers show +0.55-0.76pt top-1 over encoder-only — worth    │
