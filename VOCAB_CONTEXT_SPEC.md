@@ -513,8 +513,7 @@ This section exists because Aurora is the user's **only working input method** o
 │     memory target) in §7 "Measured Results (Milestone 3a)".                │
 │   • 37-test regression suite + selftest.py verified clean.                 │
 │                                                                              │
-│ 3b. Context LM integration — daemon side DONE 2026-08-11, live-app hook     │
-│     intentionally not yet wired (see below)                                │
+│ 3b. Context LM integration — DONE 2026-08-11 (daemon + live-app hook)      │
 │   • Validated first, before writing production code: probed the real       │
 │     hungry_jellyfish model's I/O shapes empirically (no metadata.json      │
 │     covers these) - num_exact=32768, embed_dim=16, num_buckets=32768,      │
@@ -541,12 +540,19 @@ This section exists because Aurora is the user's **only working input method** o
 │     candidates). Latency: ~14ms -> ~16ms with reranking (+2ms).            │
 │   • 55-test full regression suite + selftest.py + Milestone 1 harness      │
 │     (still 100%/100%, unaffected since it sends no context) all clean.     │
-│   • NOT DONE: the live-app hook. keyboard_window.py needs to instantiate   │
-│     RollingTokenContext and call push_word()/handle_key() at the two       │
-│     confirmed hook points (§4), and futo_client.py/manager.py need to      │
-│     thread a context list through predict()/decode() to the daemon. This  │
-│     is deliberately held for explicit go-ahead before touching             │
-│     keyboard_window.py, per §9's extra caution on that specific file.      │
+│   • Live-app hook landed: keyboard_window.py instantiates                  │
+│     RollingTokenContext in __init__, calls push_word(candidates[0]) right  │
+│     after set_candidates() and handle_key(char_to_send/keycode_str) in     │
+│     both handle_key_click() branches - exactly the two confirmed hook      │
+│     points (§4), two-line diff each, nothing else in that file touched.    │
+│     futo_client.py/manager.py thread context through predict()/decode()   │
+│     to the daemon; missing/empty context is fully backward compatible.     │
+│   • Verified without live input simulation (§9 rule 4): instantiated the   │
+│     real AuroraKeyboardWindow and called handle_key_click() directly with  │
+│     synthetic key_info dicts - period resets context, BACKSPACE pops,      │
+│     an ordinary letter leaves it untouched, all matching sec4's rules      │
+│     exactly. Confirmed the live app wasn't running before any of this      │
+│     (zero disruption risk) and the geometric fallback needs no changes.    │
 │   • Still open: custom_words.txt hot-reload hookup through lexicon.py's    │
 │     already-built reload_lexicon() (§5.2) - infra exists, unused so far.   │
 │                                                                              │

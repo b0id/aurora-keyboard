@@ -27,8 +27,14 @@ class FutoSwipeClient:
         except Exception:
             return False
 
-    def predict(self, raw_trail: list, key_positions: dict, top_n: int = 5) -> list[str]:
-        """Send swipe trajectory and key positions to the daemon and receive candidates."""
+    def predict(self, raw_trail: list, key_positions: dict, top_n: int = 5, context: list[str] | None = None) -> list[str]:
+        """Send swipe trajectory and key positions to the daemon and receive candidates.
+
+        context: optional preceding words (VOCAB_CONTEXT_SPEC.md sec4/sec6.1),
+        used by the daemon's context LM to rerank candidates. Omitted or
+        empty behaves exactly as before - the daemon treats a missing
+        context field the same as an empty one.
+        """
         if not raw_trail or len(raw_trail) < 2:
             return []
 
@@ -40,7 +46,8 @@ class FutoSwipeClient:
                 req = {
                     "raw_trail": raw_trail,
                     "key_positions": key_positions,
-                    "top_n": top_n
+                    "top_n": top_n,
+                    "context": context or [],
                 }
                 s.sendall(json.dumps(req).encode("utf-8") + b"\n")
 

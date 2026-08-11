@@ -25,15 +25,21 @@ class SwipeManager:
         raw_points: list,
         raw_trail: list,
         key_positions: dict,
-        top_n: int = 5
+        top_n: int = 5,
+        context: list = None
     ) -> Tuple[List[str], str]:
         """Decode a swipe trajectory.
+
+        context: optional preceding words (VOCAB_CONTEXT_SPEC.md sec4),
+        passed through to the daemon's context LM if one is loaded.
+        Only affects the neural path - the geometric fallback has no
+        context-scoring mechanism.
 
         Returns (candidates_list, backend_used).
         """
         # 1. Primary: Try FUTO Neural Daemon (if daemon is listening)
         if raw_trail and len(raw_trail) >= 2:
-            neural_candidates = self.futo_client.predict(raw_trail, key_positions, top_n=top_n)
+            neural_candidates = self.futo_client.predict(raw_trail, key_positions, top_n=top_n, context=context)
             if neural_candidates:
                 return neural_candidates, "futo-neural"
 

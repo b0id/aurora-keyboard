@@ -17,6 +17,7 @@ from .key_engine import KeyEngine
 from .layouts import QWERTY_ROWS, DEV_ROWS, NUMPAD_ROWS
 from .styles import THEMES
 from .swipe import SwipeManager
+from .swipe.rolling_context import RollingTokenContext
 from .geometry_manager import (
     GeometryManager, OrientationProfile, BOTTOM_CLEARANCE,
     MIN_WIDTH_FRACTION, MIN_WIDTH_FLOOR, MIN_HEIGHT_FLOOR
@@ -51,6 +52,7 @@ class AuroraKeyboardWindow(QWidget):
 
         self.engine = KeyEngine()
         self.swipe_manager = SwipeManager()
+        self.rolling_context = RollingTokenContext()
 
         self.shift_active = False
         self.caps_active = False
@@ -663,10 +665,12 @@ class AuroraKeyboardWindow(QWidget):
                 raw_points=raw_points,
                 raw_trail=raw,
                 key_positions=key_positions,
-                top_n=5
+                top_n=5,
+                context=self.rolling_context.get_context()
             )
             if candidates:
                 self.candidate_bar.set_candidates(candidates, backend)
+                self.rolling_context.push_word(candidates[0])
         except Exception as err:
             print(f"[Swipe] Decode error: {err}", file=sys.stderr)
 
@@ -688,6 +692,7 @@ class AuroraKeyboardWindow(QWidget):
                 self.engine.type_text(char_to_send)
                 if self.shift_active and not self.caps_active:
                     self.clear_modifiers()
+            self.rolling_context.handle_key(char_to_send)
 
         elif ktype == "key":
             keycode_str = key_info.get("keycode")
@@ -703,6 +708,7 @@ class AuroraKeyboardWindow(QWidget):
             else:
                 code = self.engine.get_keycode(keycode_str)
                 self.engine.send_keycode(code)
+            self.rolling_context.handle_key(keycode_str)
 
         elif ktype == "shift":
             self.shift_active = not self.shift_active
