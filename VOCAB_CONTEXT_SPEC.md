@@ -192,9 +192,19 @@ lexicon.py responsibilities:
   - Merge base wordlist + any curated additions into one ordered vocabulary.
   - Build the LetterBucketIndex (see below) once, expose it to both callers.
   - Own custom_words.txt loading/hot-reload (§6) so both backends see user boosts.
+  - Validate and sanitize every entry before it enters the pool (see below).
+  - Reload atomically so an in-flight decode never sees a half-updated pool.
 ```
 
 This is the change that makes the spec's "available to all people, not just Aurora users" goal actually true: a first-time GitHub user who never installs the executorch container still gets the expanded, bucket-indexed vocabulary through the geometric decoder — not just the 1,200-word placeholder list it ships with today.
+
+#### Data Integrity (new in v1.1.0, added 2026-08-11)
+
+Neither the current `_VOCAB`/`_VOCAB_RANKS` loading in `futo_daemon.py` nor the planned `custom_words.txt` hot-reload (§6) has a validation or concurrency plan today — this closes that gap before Milestone 2 builds on it:
+
+1. **Validate on load, for every source (downloaded vocab, bundled `wordlist.txt`, `custom_words.txt`)**: strip whitespace, lowercase, reject empty strings and any character not present in the active `key_positions` layout (catches emoji, accents, stray punctuation, blank lines). A malformed `custom_words.txt` entry — user-edited, so the least trustworthy input in this pipeline — must be dropped with a logged reason, never allowed to crash the scorer or silently corrupt the bucket index.
+2. **Deduplicate deliberately, not incidentally.** Today `_VOCAB_RANKS = {w: i for i, w in enumerate(_VOCAB)}` (`futo_daemon.py:49`) lets the last occurrence of a duplicate silently win. `lexicon.py` makes this an explicit rule: first occurrence (highest frequency-rank source) wins, later duplicates are dropped, not silently overwritten.
+3. **Reload atomically.** `handle_client` (`futo_daemon.py:207`) runs each connection in its own thread, so a `custom_words.txt` hot-reload landing mid-decode is a real race, not a hypothetical one. `lexicon.py` builds the new merged vocabulary + bucket index fully off to the side, then swaps a single module-level reference — never mutates the live structures in place. Any decode already in flight finishes against the pool it started with.
 
 ### 5.3 Spatial Pre-Filtering (Letter-Bucket Inverted Index)
 
@@ -226,7 +236,7 @@ Where:
 
 ### Dynamic User Lexicon (`custom_words.txt`)
 - Stored in standard plain-text / JSONL format at `~/.config/aurora-keyboard/custom_words.txt`.
-- Loaded through the shared `lexicon.py` module (§5.2) so both backends honor it.
+- Loaded through the shared `lexicon.py` module (§5.2) so both backends honor it, subject to the same validate-on-load and atomic-reload rules (§5.2 Data Integrity) — this file is user-edited, so it's the least trustworthy input source in the pipeline and gets no exception from those rules.
 - Users or automated tooling can add custom domain terms.
 - Whenever a user selects a suggestion from the candidate bar, its local frequency counter increments.
 
@@ -345,6 +355,10 @@ This section exists because Aurora is the user's **only working input method** o
 │ MILESTONE 2: Shared Lexicon Module + Letter-Bucket Indexer                  │
 │ • New aurora_keyboard/swipe/lexicon.py (§5.2), used by BOTH futo_daemon.py  │
 │   and decoder.py — the fallback path stops being stuck at 1,200 words.      │
+│ • Implements §5.2's Data Integrity rules: validate/sanitize every source    │
+│   on load (incl. custom_words.txt, the least-trusted input), deliberate    │
+│   dedup (first occurrence wins), atomic reload (build off to the side,     │
+│   swap one reference) so a hot-reload can't race an in-flight decode.       │
 │ • Only curate words beyond the existing 32,768 if Milestone 1's numbers     │
 │   show it's still needed after Milestone 0 (§5.1).                          │
 │ • Re-run Milestone 1 harness, compare against baseline.                     │
@@ -375,3 +389,4 @@ This section exists because Aurora is the user's **only working input method** o
 - [ ] Does every numeric claim in this document say whether it's measured (with a source) or a target (not yet verified)? *(new in v1.1.0)*
 - [ ] Does every vocabulary/scoring improvement reach the geometric fallback, not just the neural daemon path? *(new in v1.1.0 — see §5.2)*
 - [ ] Can each milestone be verified without live input simulation and without disrupting the tablet's only working input method? *(new in v1.1.0 — see §9)*
+- [ ] Does every vocabulary source (downloaded, bundled, user-edited) get validated on load, and does hot-reload swap atomically instead of mutating a pool an in-flight decode might be reading? *(added 2026-08-11 — see §5.2 Data Integrity)*
