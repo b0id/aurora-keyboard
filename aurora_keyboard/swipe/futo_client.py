@@ -14,7 +14,7 @@ SOCKET_PATH = "/tmp/futo_swipe.sock"
 class FutoSwipeClient:
     """Client for querying FUTO neural swipe predictions over Unix domain socket."""
 
-    def __init__(self, socket_path: str = SOCKET_PATH, timeout: float = 0.15):
+    def __init__(self, socket_path: str = SOCKET_PATH, timeout: float = 0.5):
         self.socket_path = socket_path
         self.timeout = timeout
 

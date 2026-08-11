@@ -274,6 +274,23 @@ def synthesize_swipe(word: str, key_positions: dict, jitter: float = 0.12, t_ste
 | **P95 Inference Latency** | $\le 4.0\text{ ms}$ pure-Python decode loop | Time spent in `futo_daemon.py`/`lexicon.py` decode path, excluding neural encoder inference itself. |
 | **Memory Footprint** | $\le 60\text{ MB}$ daemon RSS | Total daemon memory including ExecuTorch + lexicon + bigram table. |
 
+### Measured Baseline (Milestone 1, 2026-08-11)
+
+Produced by `tests/test_multisyllable_eval.py` against 31 named multisyllable words (`aurora_keyboard/swipe/trajectory.py`'s `synthesize_swipe()` — centripetal Catmull-Rom trails, not the earlier straight-line M0 spot-check), on this hardware, live daemon, post-Milestone-0:
+
+| Metric | Geometric fallback | FUTO neural daemon |
+| :--- | :--- | :--- |
+| Words evaluable | 6/31 (25 absent from `wordlist.txt` — a coverage gap, not a decode failure; see Milestone 2) | 31/31 |
+| Exact-path Top-1 | 100% (n=6) | **35.5%** (n=31) |
+| Jittered-path Top-3 | 100% (n=6) | **45.2%** (n=31) |
+| Latency (client round trip) | n/a (in-process) | p95 = 319.8ms, mean = 241.5ms — a superset of the narrower "pure decode loop" target above; encoder-only vs. scorer-only isn't separately instrumented yet |
+
+**This baseline is far below the ≥95%/≥85% target direction.** Two distinct causes, not one:
+1. **Vocabulary coverage** (geometric path): 25/31 words aren't in the fallback's 1,200-word list at all — expected, this is exactly what Milestone 2's shared `lexicon.py` exists to fix, not a regression.
+2. **Scoring/matching quality** (neural path): even with the full 32,768-word pool searchable (post-M0) and every word technically reachable, only ~35% resolve to Top-1 on an *ideal* synthetic path. This confirms the `infrastructure`-still-misses finding from Milestone 0 (§2) was not a one-off — the unigram-heavy scoring formula (§2 root cause #1, §6) is a real, separate problem from vocabulary coverage. Milestone 3's bigram/length-prior calibration is the fix; there is no scoring/tuning work landed yet, so this number is expected to be low right now.
+
+**Regression found and fixed by this harness**: running the existing suite alongside the new one surfaced a live failure in `test_swipe_e2e.py::test_futo_daemon_live_if_active`. Root cause: `FutoSwipeClient`'s default timeout (0.15s, used by the live app's `SwipeManager`) was tuned against the old 15,000-word pool's speed. Milestone 0's fix made the daemon search the larger 32,768-word pool, pushing real decode latency to ~240ms mean / ~320ms p95 — past the old default timeout, meaning **swipes on the live keyboard were silently falling back to the 1,200-word geometric decoder more often than before Milestone 0**, undoing part of the intended benefit. Confirmed directly (same trail returns `[]` at 150ms timeout, real candidates at 3s). Fixed as a stopgap: `futo_client.py`'s default `timeout` raised from 0.15s to 0.5s. The real fix is the letter-bucket index (§5.3, Milestone 2), which is meant to make the scan fast at this vocab size instead of just waiting longer for it.
+
 ---
 
 ## 8. (reserved)
@@ -311,11 +328,19 @@ This section exists because Aurora is the user's **only working input method** o
 │   coverage — deferred to Milestone 3). Existing test suite                  │
 │   (selftest.py, test_swipe_e2e.py) still passes clean.                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ MILESTONE 1: Headless Synthetic Trajectory Harness (pulled forward)         │
-│ • Build synthesize_swipe() + test_multisyllable_eval.py against the         │
-│   POST-MILESTONE-0 system to get a real, measured baseline on this hardware.│
-│ • Extends selftest.py / test_swipe_e2e.py rather than duplicating them.     │
-│ • Every later milestone is validated against this harness, not asserted.    │
+│ MILESTONE 1: Headless Synthetic Trajectory Harness — DONE 2026-08-11        │
+│ • Built aurora_keyboard/swipe/trajectory.py (synthesize_swipe(), Catmull-   │
+│   Rom smooth trails) + tests/test_multisyllable_eval.py (31-word suite,     │
+│   no pytest dependency, matches selftest.py's pattern).                     │
+│ • Measured real baseline: geometric 100%/100% but only 6/31 words in        │
+│   vocab (coverage gap → Milestone 2); FUTO neural 35.5% exact-top1 /        │
+│   45.2% jittered-top3 (scoring gap → Milestone 3). See §7 for full table.   │
+│ • Caught and fixed a live regression from Milestone 0: the larger           │
+│   32,768-word pool made real decode latency (~240ms mean) exceed the live   │
+│   app's default 150ms client timeout, silently increasing fallback-to-      │
+│   geometric frequency. Stopgap fix: futo_client.py default timeout          │
+│   0.15s → 0.5s. Real fix is Milestone 2's letter-bucket index.              │
+│ • Existing suite (selftest.py, test_swipe_e2e.py) verified clean after.     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ MILESTONE 2: Shared Lexicon Module + Letter-Bucket Indexer                  │
 │ • New aurora_keyboard/swipe/lexicon.py (§5.2), used by BOTH futo_daemon.py  │
