@@ -24,8 +24,13 @@ SOCKET_PATH = "/tmp/futo_swipe.sock"
 # Python auto-adds this file's own directory to sys.path for a direct run.
 try:
     from .lexicon import get_lexicon
+    from .beam_search import ScoringParams, decode as beam_decode
 except ImportError:
     from lexicon import get_lexicon
+    from beam_search import ScoringParams, decode as beam_decode
+
+# Published encoder-only constants (scoring.json, VOCAB_CONTEXT_SPEC.md sec6.1)
+_SCORING = ScoringParams()
 
 
 def _canonical_key_positions():
@@ -76,32 +81,16 @@ def _resample(px, py, pt, T=64):
     return np.stack([rx, ry], axis=0).astype(np.float32)
 
 
-def _greedy_ctc(log_emissions, letters):
-    blank = log_emissions.shape[-1] - 1
-    out, prev = [], -1
-    for c in log_emissions[0].argmax(axis=-1):
-        c = int(c)
-        if c != prev and c != blank and c < len(letters):
-            out.append(letters[c])
-        prev = c
-    return "".join(out)
-
-
-def _levenshtein(s1, s2):
-    if len(s1) < len(s2):
-        return _levenshtein(s2, s1)
-    if len(s2) == 0:
-        return len(s1)
-    previous_row = range(len(s2) + 1)
-    for i, c1 in enumerate(s1):
-        current_row = [i + 1]
-        for j, c2 in enumerate(s2):
-            insertions = previous_row[j + 1] + 1
-            deletions = current_row[j] + 1
-            substitutions = previous_row[j] + (c1 != c2)
-            current_row.append(min(insertions, deletions, substitutions))
-        previous_row = current_row
-    return previous_row[-1]
+def _compact_log_probs(log_emissions, letters):
+    """[1, 32, 65] raw encoder output (64 padded key slots + blank) -> a
+    [32, len(letters)+1] array (real letters in `letters` order + blank),
+    matching trie.py/beam_search.py's compact character-index convention.
+    Mirrors FUTO's own C++ side, which does the same layout-specific
+    compaction before running beam search (trie.hpp's NUM_CLASSES)."""
+    raw = log_emissions[0].numpy()  # [32, 65]
+    blank_col = raw[:, raw.shape[-1] - 1:raw.shape[-1]]
+    letter_cols = raw[:, :len(letters)]
+    return np.concatenate([letter_cols, blank_col], axis=1)
 
 
 def decode_swipe(raw_trail, key_positions, top_n=5):
@@ -142,82 +131,22 @@ def decode_swipe(raw_trail, key_positions, top_n=5):
 
             features = torch.from_numpy(_resample(px, py, pt)[None])
             log_emissions, coeffs, lam = _ENCODER.execute((features, keys_t, mask_t))
-            
-            # Neural greedy string
-            greedy_str = _greedy_ctc(log_emissions.numpy(), letters_sorted)
-            
-            # Endpoint key identification
-            start_px, start_py = px[0], py[0]
-            end_px, end_py = px[-1], py[-1]
-            
-            start_letter, min_sd = letters_sorted[0], 1e9
-            end_letter, min_ed = letters_sorted[-1], 1e9
-            for ch in letters_sorted:
-                kx, ky = key_positions[ch]
-                nkx, nky = norm(kx, ky)
-                sd = (start_px - nkx) ** 2 + (start_py - nky) ** 2
-                ed = (end_px - nkx) ** 2 + (end_py - nky) ** 2
-                if sd < min_sd:
-                    min_sd = sd
-                    start_letter = ch
-                if ed < min_ed:
-                    min_ed = ed
-                    end_letter = ch
 
-            # Score dictionary candidates - pruned via the shared letter-
-            # bucket index (lexicon.py sec5.3) instead of a linear scan
-            # over the whole vocabulary. Milestone 1 measured the old
-            # linear scan (`for word in _VOCAB`) at ~240ms mean over
-            # 32,768 words - past the live app's client timeout, causing
-            # silent fallback to the geometric decoder. Same candidate
-            # set as before (start-OR-end match), just found in
-            # O(bucket size) instead of O(vocab size).
-            candidates = []
-            pool = []
-            if _LEXICON is not None:
-                start_chars = {start_letter}
-                end_chars = {end_letter}
-                if greedy_str:
-                    start_chars.add(greedy_str[0])
-                    end_chars.add(greedy_str[-1])
-                pool = _LEXICON.index.candidates(start_chars, end_chars)
+            if _LEXICON is None:
+                return []
 
-            for word in pool:
-                if len(word) < 2:
-                    continue
-
-                start_match = (word[0] == start_letter) or (greedy_str and word[0] == greedy_str[0])
-                end_match = (word[-1] == end_letter) or (greedy_str and word[-1] == greedy_str[-1])
-
-                dist = _levenshtein(greedy_str, word)
-                dedup_word = "".join([c for i, c in enumerate(word) if i == 0 or c != word[i-1]])
-                dedup_greedy = "".join([c for i, c in enumerate(greedy_str) if i == 0 or c != greedy_str[i-1]])
-
-                rank = _LEXICON.ranks.get(word, 20000)
-                freq_score = -0.5 * np.log(rank + 5)
-
-                score = - (dist * 2.8) + freq_score
-                if word == greedy_str or dedup_word == dedup_greedy:
-                    score += 8.0
-                elif dedup_word == greedy_str or word == dedup_greedy:
-                    score += 6.0
-
-                if start_match:
-                    score += 2.0
-                if end_match:
-                    score += 1.5
-
-                candidates.append((word, float(score)))
-
-            candidates.sort(key=lambda x: x[1], reverse=True)
-
-            # If greedy string is a valid word and not already first, prioritize it if close
-            top_words = [w for w, _ in candidates[:top_n]]
-            if _LEXICON is not None and greedy_str in _LEXICON.ranks and greedy_str not in top_words:
-                top_words.insert(0, greedy_str)
-                top_words = top_words[:top_n]
-                
-            return top_words
+            # Trie-constrained CTC beam search (VOCAB_CONTEXT_SPEC.md sec6.2),
+            # ported from FUTO's own reference implementation
+            # (gitlab.futo.org/keyboard/swipe-library). Replaces the previous
+            # greedy-CTC-string + Levenshtein-distance approach, which
+            # collapsed the encoder's graded output to one string before
+            # matching - discarding exactly the information beam search
+            # uses to recover long/multi-syllable words whose greedy
+            # decode comes out garbled (Milestone 1 measured 35.5% top-1;
+            # see VOCAB_CONTEXT_SPEC.md sec2.1 for the full comparison).
+            log_probs = _compact_log_probs(log_emissions, letters_sorted)
+            results = beam_decode(log_probs, _LEXICON.trie, _SCORING, beam_width=100, top_k=top_n)
+            return [word for word, _ in results]
         except Exception as err:
             print(f"[FUTO Daemon] Error in neural decode: {err}", file=sys.stderr, flush=True)
 

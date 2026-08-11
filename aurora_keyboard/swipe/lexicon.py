@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 try:
+    from .trie import build_trie
     from .wordlist import load_wordlist
 except ImportError:
     # futo_daemon.py runs as a direct script (no package context) inside
@@ -30,6 +31,7 @@ except ImportError:
     # a plain top-level import, which works because Python auto-adds the
     # running script's own directory (this file's directory too) to
     # sys.path.
+    from trie import build_trie
     from wordlist import load_wordlist
 
 KeyPositions = dict[str, tuple[float, float]]
@@ -177,12 +179,14 @@ class LetterBucketIndex:
 
 class Lexicon:
     """One immutable snapshot: a merged vocabulary, its frequency ranks,
-    and its letter-bucket index. Built once, read many times."""
+    a letter-bucket index (sec5.3, pre-Milestone-3a candidate pruning),
+    and a trie (sec6.2, Milestone 3a - trie-constrained beam search)."""
 
     def __init__(self, key_positions: KeyPositions):
         self.vocabulary = build_vocabulary(key_positions)
         self.ranks = {w: i for i, w in enumerate(self.vocabulary)}
         self.index = LetterBucketIndex(self.vocabulary)
+        self.trie = build_trie(self.vocabulary, self.ranks)
 
 
 _lexicon_ref: Lexicon | None = None

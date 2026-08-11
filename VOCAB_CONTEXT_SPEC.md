@@ -378,6 +378,25 @@ Produced by `tests/test_multisyllable_eval.py` against 31 named multisyllable wo
 
 **Regression found and fixed by this harness**: running the existing suite alongside the new one surfaced a live failure in `test_swipe_e2e.py::test_futo_daemon_live_if_active`. Root cause: `FutoSwipeClient`'s default timeout (0.15s, used by the live app's `SwipeManager`) was tuned against the old 15,000-word pool's speed. Milestone 0's fix made the daemon search the larger 32,768-word pool, pushing real decode latency to ~240ms mean / ~320ms p95 — past the old default timeout, meaning **swipes on the live keyboard were silently falling back to the 1,200-word geometric decoder more often than before Milestone 0**, undoing part of the intended benefit. Confirmed directly (same trail returns `[]` at 150ms timeout, real candidates at 3s). Fixed as a stopgap: `futo_client.py`'s default `timeout` raised from 0.15s to 0.5s. The real fix is the letter-bucket index (§5.3, Milestone 2), which is meant to make the scan fast at this vocab size instead of just waiting longer for it.
 
+### Measured Results (Milestone 3a, 2026-08-11)
+
+Re-run of the same `tests/test_multisyllable_eval.py` harness (identical 31 words, identical synthetic trails) after replacing greedy-CTC+Levenshtein with trie-constrained CTC beam search (§6.1/§6.2):
+
+| Metric | M1 baseline (pre-3a) | **M3a (beam search)** |
+| :--- | :--- | :--- |
+| Exact-path Top-1 | 35.5% | **100.0%** (31/31) |
+| Jittered-path Top-3 | 45.2% | **100.0%** (31/31) |
+| Client round-trip latency | mean 241.5ms / p95 319.8ms | **mean 13.9ms / p95 15.5ms** |
+
+Before landing this, the beam search was validated against FUTO's own published README example ("computer", real coordinates, known-correct answer — top-1 hit) and checked for regressions on short control words on the *same* synthetic trails used throughout this spec: beam search got 5/8 exact top-1 vs. the old scorer's 3/8 on identical trails — beam search matched or beat the old approach in every head-to-head comparison run, not just on the multisyllable target set.
+
+**Honest gaps, not smoothed over:**
+- **Short words (3-5 letters) are still the softer case.** A broader 32-word live-socket spot-check (mixed short/medium/long) got 75% exact top-1; misses cluster on short words (`fox`→`fix`, `dog`→`did`, `type`→`to`) plus one longer-word miss (`wonderful`→`wrongful`, not in top-3 at all). This is a pre-existing characteristic — confirmed above to already exist under the old scorer on the same trails, not something beam search introduced — but it isn't solved either. Likely candidates: synthetic-trajectory realism for short swipes (§7 harness generates idealized paths; real human swipes on short words may carry more disambiguating signal), and/or the still-provisional Zipf-shaped frequency proxy (`trie.py`'s `zipf_log_frequency`, derived from rank position since this project doesn't have FUTO's real corpus frequency counts) not being as well-calibrated as FUTO's actual AOSP frequency data.
+- **Memory target not met, pre-existing.** Daemon RSS measured at ~743MB, well above the §7 target of ≤60MB. This is dominated by PyTorch/ExecuTorch's own baseline footprint (present since before this milestone), not something the lexicon/trie/beam-search additions introduced — but the ≤60MB target itself was never verified as achievable (v1.1.0 flagged all these numbers as targets, not facts) and should be revisited or dropped rather than left as a silently-failing gate.
+- FUTO's own published 92.94%/97.46% (Table 3, real human swipes, their 162K-word lexicon) isn't directly comparable to this 100%/100% — different evaluation corpus (synthetic vs. real swipes) and different, smaller vocabulary. The dramatic jump here is real and apples-to-apples against this project's own prior baseline, but shouldn't be read as "beating FUTO's own numbers" on a like-for-like basis.
+
+Implementation: `aurora_keyboard/swipe/trie.py` (prefix trie, Zipf-shaped frequency proxy) and `aurora_keyboard/swipe/beam_search.py` (the ported algorithm) are both headlessly unit-tested (`tests/test_trie.py`, `tests/test_beam_search.py`, 20 tests) and verified standalone before being wired into `futo_daemon.py` and `lexicon.py`'s `Lexicon.trie`, per §9. Full regression suite (37 tests: `test_swipe_e2e.py`, `test_lexicon.py`, `test_trie.py`, `test_beam_search.py`) passes clean, plus `selftest.py`.
+
 ---
 
 ## 8. (reserved)
@@ -460,14 +479,19 @@ This section exists because Aurora is the user's **only working input method** o
 │ with implementing FUTO's own published, pre-tuned method. Split into three  │
 │ sub-steps so the biggest, lowest-risk win lands and gets measured first.    │
 │                                                                              │
-│ 3a. Real decoding + scoring, encoder-only (no new model downloads)          │
-│   • Trie-constrained CTC beam search (§6.2) replacing greedy-CTC+Levenshtein│
-│   • FUTO's Equation 3 (§6.1) using published encoder-only constants as a    │
-│     starting point (γ=0.1017, λ=0.0373, β=2.1745, scoring.json)             │
-│   • lexicon.py (§5.2) gains a trie structure; may fold in or replace the    │
-│     letter-bucket index (§5.3) once trie-based pruning is measured          │
-│   • Re-run Milestone 1 harness against this alone before adding more —      │
-│     FUTO's own numbers suggest this step is most of the accuracy gap        │
+│ 3a. Real decoding + scoring, encoder-only — DONE 2026-08-11                 │
+│   • Validated first: ported beam search POC decoded FUTO's own published   │
+│     "computer" README example correctly, and matched/beat the old scorer   │
+│     on short control words on identical trails, before any repo changes.   │
+│   • New aurora_keyboard/swipe/trie.py + beam_search.py (headlessly unit-   │
+│     tested, 20 tests, before being wired into anything live per §9).       │
+│   • lexicon.py's Lexicon gained .trie; futo_daemon.py's decode_swipe now   │
+│     calls beam_search.decode() with FUTO's published constants instead of  │
+│     greedy-CTC + Levenshtein. _greedy_ctc/_levenshtein deleted (unused).   │
+│   • Measured: 35.5%→100% exact-top1, 45.2%→100% jittered-top3, latency     │
+│     241ms→13.9ms mean (17x). Full results + honest gaps (short words,      │
+│     memory target) in §7 "Measured Results (Milestone 3a)".                │
+│   • 37-test regression suite + selftest.py verified clean.                 │
 │                                                                              │
 │ 3b. Context LM integration (the real context-awareness piece)               │
 │   • Download hungry_jellyfish/context_lm.pte alongside the existing vocab   │
