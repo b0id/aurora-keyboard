@@ -17,10 +17,32 @@ import numpy as np
 # Socket path shared between container and host
 SOCKET_PATH = "/tmp/futo_swipe.sock"
 
+# lexicon.py is the shared vocab/index module (VOCAB_CONTEXT_SPEC.md sec5.2)
+# used by both this daemon and the host-side geometric fallback. This
+# script runs as a direct `python3 futo_daemon.py` (no package context -
+# see aurora-futo-daemon), so relative import falls back to a plain one;
+# Python auto-adds this file's own directory to sys.path for a direct run.
+try:
+    from .lexicon import get_lexicon
+except ImportError:
+    from lexicon import get_lexicon
+
+
+def _canonical_key_positions():
+    """Reference layout used only to validate "is every letter in this
+    word a normal a-z key" - not tied to any live keyboard's real pixel
+    geometry, which is why the shared lexicon only needs to be built once
+    at startup rather than per decode request."""
+    try:
+        from .decoder import standard_qwerty_key_positions
+    except ImportError:
+        from decoder import standard_qwerty_key_positions
+    return standard_qwerty_key_positions()
+
+
 # Try loading ExecuTorch models
 _ENCODER = None
-_VOCAB = []
-_VOCAB_RANKS = {}
+_LEXICON = None
 
 try:
     import torch
@@ -29,25 +51,14 @@ try:
 
     print("[FUTO Daemon] Downloading/loading FUTO Swipe neural models...", flush=True)
     pte_enc = hf_hub_download("futo-org/futo-swipe", "honorable_sturgeon/model_fp32.pte")
-    v_path = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt")
-    
+    # Ensures the file lexicon.py looks for (via its own cache glob) is
+    # present; lexicon.py reads it independently so it stays host-
+    # importable without a huggingface_hub dependency.
+    hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt")
+
     _ENCODER = Runtime.get().load_program(pte_enc).load_method("forward")
-    words_set = []
-    with open(v_path, "r", encoding="utf-8") as f:
-        words_set = [line.strip().lower() for line in f if line.strip()]
-
-    # Also merge bundled wordlist (modern words like swipe, app, linux, etc.)
-    bundled_path = os.path.join(os.path.dirname(__file__), "wordlist.txt")
-    if os.path.exists(bundled_path):
-        with open(bundled_path, "r", encoding="utf-8") as f:
-            bundled_words = [line.strip().lower() for line in f if line.strip()]
-            for bw in bundled_words:
-                if bw not in words_set:
-                    words_set.insert(500, bw)
-
-    _VOCAB = words_set
-    _VOCAB_RANKS = {w: i for i, w in enumerate(_VOCAB)}
-    print(f"[FUTO Daemon] Successfully loaded honorable_sturgeon encoder + {_VOCAB.__len__()} vocabulary words (incl. modern terms).", flush=True)
+    _LEXICON = get_lexicon(_canonical_key_positions())
+    print(f"[FUTO Daemon] Successfully loaded honorable_sturgeon encoder + {len(_LEXICON.vocabulary)} vocabulary words (shared lexicon.py).", flush=True)
 except Exception as err:
     print(f"[FUTO Daemon Warning] Neural models could not be loaded: {err}", file=sys.stderr, flush=True)
 
@@ -153,28 +164,38 @@ def decode_swipe(raw_trail, key_positions, top_n=5):
                     min_ed = ed
                     end_letter = ch
 
-            # Score dictionary candidates
+            # Score dictionary candidates - pruned via the shared letter-
+            # bucket index (lexicon.py sec5.3) instead of a linear scan
+            # over the whole vocabulary. Milestone 1 measured the old
+            # linear scan (`for word in _VOCAB`) at ~240ms mean over
+            # 32,768 words - past the live app's client timeout, causing
+            # silent fallback to the geometric decoder. Same candidate
+            # set as before (start-OR-end match), just found in
+            # O(bucket size) instead of O(vocab size).
             candidates = []
-            pool = _VOCAB if _VOCAB else []
-            
+            pool = []
+            if _LEXICON is not None:
+                start_chars = {start_letter}
+                end_chars = {end_letter}
+                if greedy_str:
+                    start_chars.add(greedy_str[0])
+                    end_chars.add(greedy_str[-1])
+                pool = _LEXICON.index.candidates(start_chars, end_chars)
+
             for word in pool:
                 if len(word) < 2:
                     continue
-                
-                # Check start/end letter match
+
                 start_match = (word[0] == start_letter) or (greedy_str and word[0] == greedy_str[0])
                 end_match = (word[-1] == end_letter) or (greedy_str and word[-1] == greedy_str[-1])
-                
-                if not (start_match or end_match):
-                    continue
-                
+
                 dist = _levenshtein(greedy_str, word)
                 dedup_word = "".join([c for i, c in enumerate(word) if i == 0 or c != word[i-1]])
                 dedup_greedy = "".join([c for i, c in enumerate(greedy_str) if i == 0 or c != greedy_str[i-1]])
-                
-                rank = _VOCAB_RANKS.get(word, 20000)
+
+                rank = _LEXICON.ranks.get(word, 20000)
                 freq_score = -0.5 * np.log(rank + 5)
-                
+
                 score = - (dist * 2.8) + freq_score
                 if word == greedy_str or dedup_word == dedup_greedy:
                     score += 8.0
@@ -185,14 +206,14 @@ def decode_swipe(raw_trail, key_positions, top_n=5):
                     score += 2.0
                 if end_match:
                     score += 1.5
-                    
+
                 candidates.append((word, float(score)))
 
             candidates.sort(key=lambda x: x[1], reverse=True)
-            
+
             # If greedy string is a valid word and not already first, prioritize it if close
             top_words = [w for w, _ in candidates[:top_n]]
-            if greedy_str in _VOCAB_RANKS and greedy_str not in top_words:
+            if _LEXICON is not None and greedy_str in _LEXICON.ranks and greedy_str not in top_words:
                 top_words.insert(0, greedy_str)
                 top_words = top_words[:top_n]
                 

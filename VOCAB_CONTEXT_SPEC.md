@@ -1,9 +1,32 @@
 # Vocabulary, Context & Headless Testing Architecture Specification
 
-**Document Version:** 1.1.0
+**Document Version:** 1.2.0
 **Target Subsystem:** Aurora Keyboard Swipe & Inference Subsystem
 **Status:** Approved Architecture & Sequenced Implementation Plan
 
+> **Revision note (v1.2.0, 2026-08-11):** Milestone 1's measured 35.5% top-1
+> accuracy (§7) triggered a check: is the scoring formula in `futo_daemon.py`
+> actually FUTO's own method, or something built independently? It's the
+> latter. FUTO's model repo (the same one this project already downloads
+> from) ships **three** models — an encoder (in use), a fixed-layout decoder
+> (`magic_macaw`, never downloaded), and a context language model
+> (`hungry_jellyfish`, never downloaded) — plus a published technical report
+> ([arXiv:2606.25247](https://arxiv.org/abs/2606.25247)) documenting the
+> real decoding algorithm (trie-constrained CTC beam search) and scoring
+> formula (Equation 3, with tuned constants shipped in `scoring.json`).
+> `futo_daemon.py`'s current approach — greedy CTC string, then Levenshtein
+> distance against a flat candidate list — is a simplified stand-in that
+> predates this project's awareness of FUTO's real method, not a deliberate
+> design choice. FUTO's own published number for the encoder alone, decoded
+> properly, is **92.94% top-1 / 97.46% top-3** (Table 3 of the report) —
+> consistent with most of the 35.5%→92%+ gap being decoding-method, not
+> context-awareness. This revision replaces the previous "build our own
+> bigram table + hand-tuned length prior" plan (old §6) with "use FUTO's
+> own proven, published method first" — see §2.1 and the rewritten §6/§10.
+> The stated priority (per the user, 2026-08-11) is the easy/proven path:
+> *"if this was pure android we would just use pure futo... just need to
+> make sure we get our writing straight."*
+>
 > **Revision note (v1.1.0, 2026-08-10):** v1.0.0 was written before the current
 > codebase was audited against it. That audit found a live bug and several
 > unstated architectural gaps (see §5.1). This revision corrects the spec's
@@ -39,7 +62,37 @@ Aurora Touch Keyboard currently features a functioning Wayland layer-shell inter
 2. **Cumulative Kinematic Path Drift**: Longer words require longer continuous gestures. Slight corner-cutting across 4–5 inflection points leads to higher Levenshtein/spatial drift.
 3. **Lexicon Truncation — CONFIRMED and FIXED in Milestone 0 (2026-08-10)**: `futo_daemon.py:158` read `pool = _VOCAB[:15000]`. The vocabulary actually downloaded from `futo-org/futo-swipe` (`hungry_jellyfish/vocab.txt`) contains **32,768 words**, frequency-ordered — 2,551 of them length ≥11 (a proxy for 4–5 syllables) sat entirely beyond the old cutoff and were structurally unreachable no matter how good the trajectory match was. Fixed by removing the slice (now `pool = _VOCAB`).
    **Empirical before/after** (synthetic straight-line trails through key centers, live daemon, see `git log` for the change): all 4 sampled beyond-cutoff words (`longstanding`, `navigational`, `originality`, `probabilities`) went from a hard MISS (word not in searchable pool at all) to top-1 HIT after the fix, with zero regression on 4 control words and the spec's own named examples. **Important correction to the original hypothesis**: 3 of this spec's 4 named example words (`characteristic`, `sustainability`, `unprecedented`) were already ranked well inside the old 15,000 cap and already resolved correctly both before and after — this bug was not why those specific words failed for the user. `infrastructure` (rank 2,704, also inside the old cap) still misses on a synthetic straight path both before and after the fix, resolving to `inmate`/`immature` instead — that's a scoring/matching issue, not a vocabulary coverage issue, and is carried forward as an open item for Milestone 3's scoring calibration rather than something this fix addresses.
-4. **Lack of Preceding Context**: Long words are often predictable given the preceding word (e.g., *"critical"* $\to$ *"infrastructure"*, *"artificial"* $\to$ *"intelligence"*). Without bigram context, the decoder cannot disambiguate borderline trajectories.
+4. **Lack of Preceding Context**: Long words are often predictable given the preceding word (e.g., *"critical"* $\to$ *"infrastructure"*, *"artificial"* $\to$ *"intelligence"*). Without bigram context, the decoder cannot disambiguate borderline trajectories. **Update (v1.2.0, see §2.1): FUTO ships a trained context LM for exactly this. Root cause 4 is "not integrated," not "no data source exists."**
+
+### 2.1 What FUTO's Own System Actually Does (added v1.2.0, 2026-08-11)
+
+`futo_daemon.py` was built as a working stand-in, not a port of FUTO's real method. Checking FUTO's model repo and technical report against what's actually implemented found a substantial gap:
+
+| | `futo_daemon.py` today | FUTO's actual published method |
+| :--- | :--- | :--- |
+| **Decoding algorithm** | Greedy CTC → one string → Levenshtein distance against every candidate in a flat/bucketed list | **Trie-constrained CTC beam search**, beam width 100, with length-aware beam pruning (own tuned formula) |
+| **Scoring formula** | Hand-built: `-2.8·dist - 0.5·ln(rank+5)` plus several flat `+N.N` match bonuses, none derived from FUTO's work | **Equation 3** (below) — length-normalized CTC score + log-frequency term + length term, three constants (`γ, λ_f, β`) tuned per model combination and shipped in `scoring.json` |
+| **Frequency data** | Ordinal rank position in a plain word list | Log-scale frequency value stored per-word in the trie itself (AOSP dictionary format) |
+| **Models used** | Encoder only (`honorable_sturgeon`) | Encoder **+ optional fixed-layout decoder (`magic_macaw`) + optional context LM (`hungry_jellyfish`)** — all three ship in the same HF repo this project already pulls from |
+| **Context awareness** | Not implemented; this spec's v1.1.0 planned a from-scratch bigram table (`wordfreq`) | A **trained context language model** already exists (`hungry_jellyfish`), used via an `α·s_LM` term added to Equation 3. FUTO's own production config weights it at `α=0.6459` — a large, deliberately-tuned weight, not a minor add-on |
+| **Reported accuracy** | 35.5% top-1 (Milestone 1, §7) | **92.94% top-1 / 97.46% top-3** (encoder-only, val split, Table 3 of the technical report) |
+
+**FUTO's real scoring formula** (Equation 3, technical report §2.3):
+
+$$s(w \mid y) = -\frac{\text{CTC}(w \mid y)}{L_w^{\gamma}} + \lambda_f \log f_w + \beta L_w$$
+
+where $\text{CTC}(w \mid y)$ is the CTC negative log-likelihood of word $w$ given the encoder's output $y$ (turned into a score by the leading minus), $L_w$ is word length, $f_w$ is the word's frequency (read from the trie's stored per-word frequency field), and $(\gamma, \lambda_f, \beta)$ are tuned jointly with the model. **Production deployment optionally adds an `α·s_LM` term**, where $s_{\text{LM}}$ is the context LM's log-likelihood of the candidate given the preceding word(s) — this is the real "bigram/context" term, already trained, not something this project needs to build from a frequency corpus. Real tuned constants (from `scoring.json`, downloaded alongside the models):
+
+| Configuration | γ | λ (freq) | β (length) | α (context LM) |
+| :--- | ---: | ---: | ---: | ---: |
+| Encoder only | 0.1017 | 0.0373 | 2.1745 | — |
+| Encoder + decoder | 0.1081 | 0.0335 | 2.1994 | — |
+| Encoder + context LM | 0.0159 | 0.0219 | 3.0665 | **0.6459** |
+| Encoder + decoder + context LM | 0.1126 | 0.0060 | 2.2138 | **0.6387** |
+
+Beam search itself is trie-constrained (deployment lexicon: an AOSP-format wordlist, 162,185 English entries in FUTO's own evaluation) with a separate length-aware pruning score, `s_prune = s_ctc / max(d,1)^γp + βp·d` at depth `d`, tuned independently to maximize beam recall.
+
+**What this means for this spec**: §6 (scoring formulation) and Milestone 3 (§10) are rewritten to implement FUTO's real, published, pre-tuned method instead of the from-scratch formula v1.1.0 proposed. This is the "easy path" — proven weights and a documented algorithm, not new tuning work.
 
 ---
 
@@ -84,15 +137,17 @@ Aurora Touch Keyboard currently features a functioning Wayland layer-shell inter
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │                  FUTO NEURAL DAEMON (futo_daemon.py)                  │  │
 │  │                                                                       │  │
-│  │  1. Spatial Encoder (Honorable Sturgeon 1D-CNN) ──► Greedy CTC        │  │
+│  │  1. Encoder (honorable_sturgeon 1D-CNN) ──► per-timestep CTC logits   │  │
 │  │                                                          │            │  │
-│  │  2. lexicon.py LetterBucketIndex (shared, see above) ◄───┤            │  │
-│  │     • Fast (start_char, end_char, length) Candidate Sieve│            │  │
+│  │  2. lexicon.py trie (shared, see above) ◄─────────────────┤            │  │
+│  │     • Trie-constrained CTC beam search (§2.1, §6)         │            │  │
+│  │     • (Optional) magic_macaw decoder refinement           │            │  │
 │  │                                                          ▼            │  │
-│  │  3. Multi-Factor Contextual Scorer                       │            │  │
-│  │     • CTC Edit Distance + Length Prior                   │            │  │
-│  │     • Unigram Frequency (Rank-scaled)                    │            │  │
-│  │     • Pruned Bigram LM Context Table (log P(w|w_prev))   │            │  │
+│  │  3. FUTO Equation-3 Scorer (§6 — real, published, tuned) │            │  │
+│  │     • Length-normalized CTC score                        │            │  │
+│  │     • Log-frequency term (trie-stored, AOSP format)       │            │  │
+│  │     • Length term                                        │            │  │
+│  │     • (Optional) α·context-LM term — hungry_jellyfish     │            │  │
 │  │     • Dynamic User Lexicon Boost                         │            │  │
 │  │                                                          ▼            │  │
 │  │  4. Top-5 Ranked Word Output ────────────────────────────┘            │  │
@@ -158,6 +213,8 @@ class RollingTokenContext:
 - `keyboard_window.py:673` (`handle_key_click`) already branches on `ktype in {"char", "key"}` for every keystroke, including punctuation and navigation. This is the natural call site for `RollingTokenContext.handle_key()`.
 - Both hook points mean `RollingTokenContext` can be added as pure new code with two single-line call insertions into `keyboard_window.py`, rather than restructuring existing logic there. Keeping the diff in that file minimal is deliberate — see §9.
 
+**Update (v1.2.0)**: this component's purpose is unchanged by the §2.1/§6 rewrite — it's still the thing that supplies "preceding word(s)" to whatever scores context. What changed is what consumes it: `get_context()`'s output is sent as the `context` field to `futo_daemon.py`, which now feeds it to `hungry_jellyfish` (the real trained context LM, §6.1) as the `α·s_LM` term's input, instead of a hand-built bigram lookup. `RollingTokenContext` itself needed no redesign for this pivot — the FIFO/boundary-reset logic was already model-agnostic.
+
 ---
 
 ## 5. Lexicon & Search Optimization
@@ -176,7 +233,7 @@ class RollingTokenContext:
 v1.0.0 framed the target as "scale from 15,000 to 70,000+ words," which conflated the truncation bug with a genuine curation goal. The honest sequence is:
 
 1. **Milestone 0**: fix the truncation bug. This alone raises the daemon's searchable pool from 15,000 to the full 32,768 already on disk — more than doubling it — for a one-line change and zero new data.
-2. **Measure** (Milestone 1 harness) whether 32,768 words, once the length-prior and bigram terms (§6) are in place, already clears the accuracy gates in §7.
+2. **Measure** (Milestone 1 harness) whether 32,768 words, once FUTO's real scoring/decoding method (§6) is in place, already clears the accuracy gates in §7.
 3. **Only then** decide whether curating an additional word set (v1.0.0's proposed 25k expressive + 10k technical corpus) is worth the maintenance cost. Bloating the pool with low-quality entries is a real risk, not a hypothetical one — `wordlist.py`'s existing docstring already notes this exact failure mode from an earlier decision to avoid `/usr/share/dict/words`. Scale is not free; every extra low-frequency word is a false-positive risk for shorter/mid-length words too.
 
 This turns "scale to 70,000" from a committed deliverable into a **staged, evidence-gated goal** — which is what "achievable and realistic" means in practice here.
@@ -220,19 +277,35 @@ Given detected gesture endpoints (e.g., gesture begins near `c` and ends near `n
 2. Candidate pool shrinks substantially — the exact ratio depends on the final vocab size chosen per §5.1's staged process, and will be measured, not assumed.
 3. Target: sub-millisecond Levenshtein + score computation in pure Python at the current 32,768-word scale. **To be verified empirically in Milestone 1 before being treated as met.**
 
+**Status (v1.2.0)**: built and verified in Milestone 2 — narrows the pool ~4.5x (e.g. 31,359 → 6,950 for a real test case) with zero accuracy change, but per-candidate Levenshtein scoring over the remaining pool still dominates latency (~330ms), not the lookup itself. Milestone 3 replaces the whole flat-list-plus-Levenshtein approach with trie-constrained beam search (§6.2), which is expected to fold in or replace this structure rather than run alongside it — this section is likely to be superseded, not just extended, once Milestone 3 lands.
+
 ---
 
-## 6. Syllable-Aware & Bigram Scoring Formulation
+## 6. Scoring Formulation (rewritten v1.2.0 — FUTO's real method, not a from-scratch formula)
 
-The final candidate ranking uses a balanced multi-factor scoring function:
+v1.1.0 proposed a hand-built scoring function (Levenshtein distance + a guessed length-prior constant + a bigram table sourced from `wordfreq`). That plan is **replaced**: §2.1 found FUTO already publishes a tuned, evaluated scoring formula for this exact problem, shipped with real trained weights. Using it is less work than building and tuning our own, and starts from FUTO's own reported 92.94% top-1 rather than an untested guess.
 
-$$\text{FinalScore}(w) = \text{Spatial}(w) + \text{LenPrior}(w) + \lambda_{\text{uni}} \ln P(w) + \lambda_{\text{bi}} \ln P(w \mid w_{t-1}) + \text{UserBoost}(w)$$
+### 6.1 FUTO's Equation 3 (the real formula)
 
-Where:
-- **$\text{Spatial}(w)$**: $-2.8 \cdot \text{Levenshtein}(\text{CTC\_greedy}, w)$ — existing constant, carried over from the current scorer.
-- **$\text{LenPrior}(w)$**: Compensates for the inherent unigram frequency bias against long words. Starting hypothesis: if raw trail duration $\ge 400\text{ms}$ and character count $\ge 9$, apply $+1.8 \cdot \ln(\text{length})$. **This constant is a starting point, not a tuned value** — it must be calibrated against the Milestone 1 harness's real accuracy numbers, since nothing in this system has been tuned against measured data yet.
-- **$\text{Bigram}(w \mid w_{t-1})$**: Log-probability from a compact top-bigram table. **Open scope item**: v1.0.0 specified "a 4MB pruned table covering 300,000 high-frequency transitions" without naming a data source. That number was aspirational, not sourced. Building this requires an actual offline bigram frequency corpus (e.g., derived from the `wordfreq` package's bundled data, which is pip-installable and has no network dependency at runtime) — table size and transition count will be whatever that source actually yields after pruning to the shared lexicon's vocabulary, not a pre-committed figure. This is real, scoped work (Milestone 3), not a one-line addition.
-- **$\text{UserBoost}(w)$**: Dynamic weight bonus for words in `~/.config/aurora-keyboard/custom_words.txt`.
+$$s(w \mid y) = -\frac{\text{CTC}(w \mid y)}{L_w^{\gamma}} + \lambda_f \log f_w + \beta L_w \;\;\big[ + \; \alpha \cdot s_{\text{LM}}(w \mid \text{context}) \big]$$
+
+- $\text{CTC}(w \mid y)$ — the CTC negative log-likelihood of candidate word $w$ given the encoder's per-timestep output $y$, computed incrementally during trie-constrained beam search (not a post-hoc Levenshtein distance against a single greedy string — that discards information the CTC log-probabilities actually carry).
+- $L_w^{\gamma}$ — length normalization; without it, longer words accumulate more CTC cost simply by having more characters to score, independent of match quality. This is the length-penalty root cause from §2 root cause #1, but fixed with FUTO's own normalization term instead of a guessed `LenPrior` add-on.
+- $\lambda_f \log f_w$ — log-frequency term, using the trie's stored per-word frequency (AOSP wordlist convention: a 0–255 integer proportional to log raw corpus frequency), not an ordinal rank position.
+- $\beta L_w$ — an explicit length bonus, tuned jointly with the other terms.
+- $\alpha \cdot s_{\text{LM}}(w \mid \text{context})$ — **optional, the real context-awareness term.** $s_{\text{LM}}$ is `hungry_jellyfish`'s log-likelihood of candidate $w$ given the preceding word(s) (fed by `RollingTokenContext`, §4). This is what root cause #4 actually needed — a trained model, not a bigram table built from scratch.
+
+Constants $(\gamma, \lambda_f, \beta[, \alpha])$ are **not guessed** — they're published in `scoring.json` alongside the models, tuned per model combination (see §2.1's table). Milestone 3 uses these directly as a starting point, then re-validates against the Milestone 1 harness on this project's own vocabulary/hardware before treating them as final — real published constants still get the same "measure, don't assume" treatment as everything else in this spec (§1 tenet 6), they just start from a far better prior than a guess.
+
+### 6.2 Decoding algorithm change (also part of Milestone 3)
+
+Equation 3 is scored during **trie-constrained CTC beam search** (beam width 100, FUTO's reported setting), not applied after the fact to a flat or bucket-pruned word list. This is a real algorithm change, not just new score terms bolted onto the existing loop:
+- The shared lexicon (§5.2) needs a trie structure in addition to (or replacing) the flat list + letter-bucket index — a trie is what makes incremental beam search over partial words efficient, and it's what the letter-bucket index (§5.3) was an interim substitute for.
+- Length-aware beam pruning (`s_prune`, §2.1) keeps the search fast as the beam grows, playing the same "keep this cheap at scale" role the letter-bucket index was built for in Milestone 2 — expected to fold into or replace §5.3 once implemented and measured.
+- This is why the Milestone 2 latency finding (bucket index narrows the pool but the flat per-candidate Levenshtein loop still dominates cost) stops being the bottleneck once decoding no longer runs that loop at all.
+
+### 6.3 UserBoost (unchanged)
+- Dynamic weight bonus for words in `~/.config/aurora-keyboard/custom_words.txt`, added on top of Equation 3's score. Same mechanism as v1.1.0 planned — this part wasn't guessed, it's a straightforward additive boost, and stays.
 
 ### Dynamic User Lexicon (`custom_words.txt`)
 - Stored in standard plain-text / JSONL format at `~/.config/aurora-keyboard/custom_words.txt`.
@@ -255,10 +328,10 @@ tests/
 ├── test_swipe_e2e.py            (Existing basic socket tests — extend, don't duplicate)
 ├── test_context_token_buffer.py (NEW: Unit tests for RollingTokenContext)
 ├── test_multisyllable_eval.py   (NEW: Headless synthetic trajectory benchmark)
-└── test_bigram_scoring.py       (NEW: Disambiguation & context ranking tests)
+└── test_context_disambiguation.py (NEW: hungry_jellyfish context-LM reranking tests, §6.1/§10 Milestone 3b - supersedes the v1.1.0-planned test_bigram_scoring.py, no bigram table to test anymore)
 ```
 
-`aurora_keyboard/swipe/selftest.py` already establishes the pattern this extends: no pytest dependency required to run, synthetic jittered paths, pass/fail against a fixed word list. The new multisyllable/bigram tests follow the same shape at a larger scale.
+`aurora_keyboard/swipe/selftest.py` already establishes the pattern this extends: no pytest dependency required to run, synthetic jittered paths, pass/fail against a fixed word list. The new multisyllable/context tests follow the same shape at a larger scale.
 
 ### Synthetic Kinematic Trajectory Generator
 To test 4–5 syllable words reliably, a mathematical gesture synthesizer creates realistic resampled $(x, y, t)$ trajectories:
@@ -276,13 +349,17 @@ def synthesize_swipe(word: str, key_positions: dict, jitter: float = 0.12, t_ste
 
 **Methodology change from v1.0.0**: rather than asserting these numbers as pre-known facts, Milestone 1 runs the harness against the *current* system (post-Milestone-0 bugfix, pre-tuning) to establish a real baseline. The table below is the **target direction**; the actual pass/fail gates committed to CI are whatever Milestone 1 measures plus "no regression," tightened only as later milestones prove they can hit tighter numbers without violating Zero UI Regression (§1) or daemon stability (§9).
 
+**Update (v1.2.0)**: the accuracy targets below are no longer arbitrary round numbers — they're FUTO's own published results (technical report, Table 3, encoder-only, val split, proper trie-constrained beam search): **92.94% top-1 / 97.46% top-3**. That's the realistic ceiling Milestone 3 is working toward by implementing FUTO's real method (§6), not a number invented for this spec.
+
 | Metric | Target Direction | Description |
 | :--- | :--- | :--- |
-| **4–5 Syllable Accuracy (Exact Path)** | as high as achievable, aim $\ge 95\%$ | Top-1 candidate matches target word on ideal path. |
-| **4–5 Syllable Accuracy (Jittered Path)** | aim $\ge 85\%$ | Target word appears in Top-3 on noisy/curved path. |
-| **Context Disambiguation Rate** | aim $\ge 90\%$ | Given preceding context (e.g. *"sustainable"*), target multi-syllable (*"agriculture"*) beats unigram distractor (*"age"*). |
+| **4–5 Syllable Accuracy (Exact Path)** | ~93% top-1 (FUTO's own published number, §2.1/§6.1) | Top-1 candidate matches target word on ideal path. |
+| **4–5 Syllable Accuracy (Jittered Path)** | ~97% top-3 (FUTO's own published number) | Target word appears in Top-3 on noisy/curved path. |
+| **Context Disambiguation Rate** | aim $\ge 90\%$ | Given preceding context (e.g. *"sustainable"*), target multi-syllable (*"agriculture"*) beats unigram distractor (*"age"*). Powered by `hungry_jellyfish`'s trained `α·s_LM` term (§6.1), not a hand-built bigram table. |
 | **P95 Inference Latency** | $\le 4.0\text{ ms}$ pure-Python decode loop | Time spent in `futo_daemon.py`/`lexicon.py` decode path, excluding neural encoder inference itself. |
-| **Memory Footprint** | $\le 60\text{ MB}$ daemon RSS | Total daemon memory including ExecuTorch + lexicon + bigram table. |
+| **Memory Footprint** | $\le 60\text{ MB}$ daemon RSS | Total daemon memory including ExecuTorch + lexicon trie + (if enabled) the context LM model. |
+
+Two caveats carried over honestly, not smoothed away: FUTO's 93%/97% numbers are on *their* evaluation corpus (`swipe.futo.org`, real human swipes) and *their* deployment lexicon (162,185-entry AOSP wordlist), not this project's synthetic-trajectory harness or current ~31,359-word vocabulary — Milestone 3 re-measures on this project's own harness rather than assuming the published number transfers exactly. And FUTO's own paper states the context LM specifically "is trained as a separate component and is not evaluated in this paper" — so the `α`-weighted context term's real-world effect size is not yet published even by FUTO; Milestone 3 measures it directly once wired in.
 
 ### Measured Baseline (Milestone 1, 2026-08-11)
 
@@ -297,7 +374,7 @@ Produced by `tests/test_multisyllable_eval.py` against 31 named multisyllable wo
 
 **This baseline is far below the ≥95%/≥85% target direction.** Two distinct causes, not one:
 1. **Vocabulary coverage** (geometric path): 25/31 words aren't in the fallback's 1,200-word list at all — expected, this is exactly what Milestone 2's shared `lexicon.py` exists to fix, not a regression.
-2. **Scoring/matching quality** (neural path): even with the full 32,768-word pool searchable (post-M0) and every word technically reachable, only ~35% resolve to Top-1 on an *ideal* synthetic path. This confirms the `infrastructure`-still-misses finding from Milestone 0 (§2) was not a one-off — the unigram-heavy scoring formula (§2 root cause #1, §6) is a real, separate problem from vocabulary coverage. Milestone 3's bigram/length-prior calibration is the fix; there is no scoring/tuning work landed yet, so this number is expected to be low right now.
+2. **Scoring/matching quality** (neural path): even with the full 32,768-word pool searchable (post-M0) and every word technically reachable, only ~35% resolve to Top-1 on an *ideal* synthetic path. This confirms the `infrastructure`-still-misses finding from Milestone 0 (§2) was not a one-off — the unigram-heavy scoring formula (§2 root cause #1, §6) is a real, separate problem from vocabulary coverage. **Root-caused further in Milestone 2.5/§2.1**: the scoring/decoding approach itself diverged from FUTO's own published method. Milestone 3 (§10) now adopts FUTO's real trie-constrained beam search + Equation 3 instead of tuning the from-scratch formula further.
 
 **Regression found and fixed by this harness**: running the existing suite alongside the new one surfaced a live failure in `test_swipe_e2e.py::test_futo_daemon_live_if_active`. Root cause: `FutoSwipeClient`'s default timeout (0.15s, used by the live app's `SwipeManager`) was tuned against the old 15,000-word pool's speed. Milestone 0's fix made the daemon search the larger 32,768-word pool, pushing real decode latency to ~240ms mean / ~320ms p95 — past the old default timeout, meaning **swipes on the live keyboard were silently falling back to the 1,200-word geometric decoder more often than before Milestone 0**, undoing part of the intended benefit. Confirmed directly (same trail returns `[]` at 150ms timeout, real candidates at 3s). Fixed as a stopgap: `futo_client.py`'s default `timeout` raised from 0.15s to 0.5s. The real fix is the letter-bucket index (§5.3, Milestone 2), which is meant to make the scan fast at this vocab size instead of just waiting longer for it.
 
@@ -313,7 +390,7 @@ Produced by `tests/test_multisyllable_eval.py` against 31 named multisyllable wo
 
 This section exists because Aurora is the user's **only working input method** on this tablet. Every rule below exists to make that fact structurally hard to violate, not just something to remember.
 
-1. **Container-isolated daemon work stays container-isolated.** All lexicon, bucket-index, and bigram scoring changes to `futo_daemon.py` are developed and tested inside the `ydotool-box` distrobox container, driven over the existing `/tmp/futo_swipe.sock` JSON protocol. A daemon crash during this work is a killed container process — it cannot take down `AuroraKeyboardWindow`, which is exactly the isolation the existing dual-backend architecture already provides (§3). This is a guarantee to preserve, not something new to build.
+1. **Container-isolated daemon work stays container-isolated.** All lexicon, indexing, and scoring/decoding changes to `futo_daemon.py` (including Milestone 3's trie-based beam search and context LM integration) are developed and tested inside the `ydotool-box` distrobox container, driven over the existing `/tmp/futo_swipe.sock` JSON protocol. A daemon crash during this work is a killed container process — it cannot take down `AuroraKeyboardWindow`, which is exactly the isolation the existing dual-backend architecture already provides (§3). This is a guarantee to preserve, not something new to build.
 2. **New logic is headlessly unit-tested before it is wired into the live UI file.** `RollingTokenContext` (§4) and `lexicon.py` (§5.2) are plain Python classes with no Qt/Wayland dependency — they get `tests/test_context_token_buffer.py`-style coverage and pass standalone *before* either is imported into `keyboard_window.py`.
 3. **Changes to `keyboard_window.py`/`key_engine.py` are minimized and checked before every restart.** Per the confirmed hook points in §4, wiring `RollingTokenContext` in requires exactly two call-site insertions, not a restructure. Any edit to these two files gets a syntax check (`python3 -m py_compile`) and, where the change is import-only or call-site-only, a `python3 -c "import aurora_keyboard.keyboard_window"` smoke check before the app is restarted for the user to try.
 4. **No live input simulation for verification.** `ydotool key`/`click` or equivalent are not used to test changes on the real desktop session. Verification uses the Milestone 1 synthetic trajectory harness, direct method calls against the swipe modules, and log/socket inspection — the same approach already validated as effective and non-disruptive on this project.
@@ -352,23 +429,67 @@ This section exists because Aurora is the user's **only working input method** o
 │   0.15s → 0.5s. Real fix is Milestone 2's letter-bucket index.              │
 │ • Existing suite (selftest.py, test_swipe_e2e.py) verified clean after.     │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ MILESTONE 2: Shared Lexicon Module + Letter-Bucket Indexer                  │
-│ • New aurora_keyboard/swipe/lexicon.py (§5.2), used by BOTH futo_daemon.py  │
-│   and decoder.py — the fallback path stops being stuck at 1,200 words.      │
-│ • Implements §5.2's Data Integrity rules: validate/sanitize every source    │
-│   on load (incl. custom_words.txt, the least-trusted input), deliberate    │
-│   dedup (first occurrence wins), atomic reload (build off to the side,     │
-│   swap one reference) so a hot-reload can't race an in-flight decode.       │
-│ • Only curate words beyond the existing 32,768 if Milestone 1's numbers     │
-│   show it's still needed after Milestone 0 (§5.1).                          │
-│ • Re-run Milestone 1 harness, compare against baseline.                     │
+│ MILESTONE 2: Shared Lexicon Module + Letter-Bucket Indexer — DONE 2026-08-11│
+│ • Built aurora_keyboard/swipe/lexicon.py (§5.2): build_vocabulary() merges  │
+│   bundled wordlist + FUTO's downloaded vocab + custom_words.txt (first-wins │
+│   dedup), LetterBucketIndex (§5.3) for O(bucket) candidate pruning, atomic  │
+│   get_lexicon()/reload_lexicon() swap. Data Integrity rules implemented and │
+│   unit-tested (tests/test_lexicon.py, 13 tests) - caught a real pre-        │
+│   existing bug in the process (676 case-variant duplicates in FUTO's own    │
+│   vocab.txt, e.g. "More"/"more", were never deduped before this).           │
+│ • Wired into BOTH futo_daemon.py (replacing the manual vocab-merge code and │
+│   the linear `for word in _VOCAB` scan) and available to decoder.py/        │
+│   manager.py for the fallback path.                                        │
+│ • Verified zero accuracy regression (M1 harness numbers unchanged: 35.5%/   │
+│   45.2%) and confirmed the bucket index narrows the pool ~4.5x, but see     │
+│   §5.3 status note - it's not the actual latency bottleneck.                │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ MILESTONE 3: Bigram Scoring + Rolling Token Context + Dynamic User Lexicon  │
-│ • Source and prune an offline bigram frequency table (§6) into lexicon.py.  │
-│ • Add RollingTokenContext to keyboard_window.py at the two confirmed hook   │
-│   points (§4) — candidate_bar.set_candidates() and handle_key_click().      │
-│ • Hook custom_words.txt hot-reloading through lexicon.py.                   │
-│ • Add test_bigram_scoring.py + test_context_token_buffer.py.                │
+│ MILESTONE 2.5: Discovery — FUTO's Real Method (2026-08-11, see §2.1)        │
+│ • Investigating why latency barely improved despite the bucket index found  │
+│   the real bottleneck: pure-Python Levenshtein scoring over ~7,000          │
+│   candidates (~330ms), not candidate selection.                            │
+│ • That investigation led to checking FUTO's model repo against what's      │
+│   implemented, which found 2 of FUTO's 3 shipped models were never used,   │
+│   and the scoring formula was hand-built rather than FUTO's own tuned,     │
+│   published method. See §2.1 for the full comparison and citation.         │
+│ • No code changed in this step - pure investigation that reshaped           │
+│   Milestone 3 below.                                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ MILESTONE 3: Adopt FUTO's Real Method (rewritten v1.2.0, see §2.1/§6)       │
+│ Replaces the old "from-scratch bigram table + guessed length prior" plan    │
+│ with implementing FUTO's own published, pre-tuned method. Split into three  │
+│ sub-steps so the biggest, lowest-risk win lands and gets measured first.    │
+│                                                                              │
+│ 3a. Real decoding + scoring, encoder-only (no new model downloads)          │
+│   • Trie-constrained CTC beam search (§6.2) replacing greedy-CTC+Levenshtein│
+│   • FUTO's Equation 3 (§6.1) using published encoder-only constants as a    │
+│     starting point (γ=0.1017, λ=0.0373, β=2.1745, scoring.json)             │
+│   • lexicon.py (§5.2) gains a trie structure; may fold in or replace the    │
+│     letter-bucket index (§5.3) once trie-based pruning is measured          │
+│   • Re-run Milestone 1 harness against this alone before adding more —      │
+│     FUTO's own numbers suggest this step is most of the accuracy gap        │
+│                                                                              │
+│ 3b. Context LM integration (the real context-awareness piece)               │
+│   • Download hungry_jellyfish/context_lm.pte alongside the existing vocab   │
+│   • Add RollingTokenContext to keyboard_window.py at the two confirmed hook │
+│     points (§4) — candidate_bar.set_candidates() and handle_key_click()     │
+│   • Wire RollingTokenContext.get_context() → α·s_LM term in Equation 3,     │
+│     using published encoder+contextlm constants (α=0.6459) as a starting    │
+│     point, re-tuned against Milestone 1's harness                           │
+│   • Add test_context_token_buffer.py + a context-disambiguation eval        │
+│     (replaces the planned test_bigram_scoring.py - no bigram table to test) │
+│   • Hook custom_words.txt hot-reloading through lexicon.py's already-built   │
+│     reload_lexicon() (§5.2) - infra exists since Milestone 2, just unused   │
+│                                                                              │
+│ 3c. (Optional, smaller win) magic_macaw decoder refinement                  │
+│   • FUTO's own numbers show +0.55-0.76pt top-1 over encoder-only — worth    │
+│     doing only after 3a/3b are measured and only if still worthwhile        │
+│                                                                              │
+│ Portability note: none of 3a-3c reach the geometric fallback (no neural     │
+│ models there by design, §3). The fallback's context-awareness, if wanted    │
+│ later, would still need a lightweight non-neural approach (e.g. a small     │
+│ bigram table) — deferred, not blocking, since §1 tenet 4 prioritizes this   │
+│ tablet's working input method first.                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ MILESTONE 4: Reliability & CI/CD                                            │
 │ • User-level systemd unit for futo_daemon.py: auto-start, Restart=on-failure│
@@ -390,3 +511,5 @@ This section exists because Aurora is the user's **only working input method** o
 - [ ] Does every vocabulary/scoring improvement reach the geometric fallback, not just the neural daemon path? *(new in v1.1.0 — see §5.2)*
 - [ ] Can each milestone be verified without live input simulation and without disrupting the tablet's only working input method? *(new in v1.1.0 — see §9)*
 - [ ] Does every vocabulary source (downloaded, bundled, user-edited) get validated on load, and does hot-reload swap atomically instead of mutating a pool an in-flight decode might be reading? *(added 2026-08-11 — see §5.2 Data Integrity)*
+- [ ] Does the scoring/decoding plan use FUTO's own published method and tuned constants where one exists, rather than a formula invented for this spec? *(added v1.2.0, 2026-08-11 — see §2.1, §6)*
+- [ ] Is every "target" accuracy/latency number in this document either FUTO's own published result (with citation) or this project's own Milestone 1 harness measurement — not a round number picked for its own sake? *(added v1.2.0)*
