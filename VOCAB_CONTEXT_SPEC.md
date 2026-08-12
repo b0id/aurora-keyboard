@@ -226,7 +226,7 @@ class RollingTokenContext:
 | FUTO daemon vocab (downloaded from HF, frequency-ordered) | 32,768 words |
 | FUTO daemon candidate pool actually searched | **capped at 15,000** by the `_VOCAB[:15000]` bug (§2.3) |
 | Geometric fallback wordlist (`swipe/wordlist.txt`) | 1,200 words, entirely separate from the daemon's vocab |
-| Daemon process supervision | **none** — started manually via `./aurora-futo-daemon &`, no systemd unit, no auto-restart, no auto-launch from `main.py` |
+| Daemon process supervision | ~~none~~ **Fixed in Milestone 4a (2026-08-12)** — systemd --user unit, auto-start at login, auto-restart on crash (~5s recovery, verified with a real `kill -9`). This gap caused a real incident: the daemon died silently after the 2026-08-11 session, degrading every swipe to the 1,175-word fallback for hours before it was noticed. |
 | CI/CD | none — no `.github/` directory exists yet |
 | Headless test coverage | `tests/test_swipe_e2e.py`, `aurora_keyboard/swipe/selftest.py` — real prior art to extend, not a green field |
 
@@ -566,9 +566,35 @@ This section exists because Aurora is the user's **only working input method** o
 │ bigram table) — deferred, not blocking, since §1 tenet 4 prioritizes this   │
 │ tablet's working input method first.                                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ MILESTONE 4: Reliability & CI/CD                                            │
-│ • User-level systemd unit for futo_daemon.py: auto-start, Restart=on-failure│
-│   — closes the "daemon silently never started/crashed" gap found in §5.1.   │
+│ MILESTONE 4a: Daemon Supervision — DONE 2026-08-12                          │
+│ Triggered by a real incident, not proactive hardening: the daemon died      │
+│ silently sometime after the 2026-08-11 session ended (no supervision        │
+│ existed yet), and every swipe silently degraded to the 1,175-word           │
+│ geometric fallback for hours before it was noticed - structurally unable    │
+│ to produce most multi-syllable words (7/10 of a sample were absent from     │
+│ that fallback list entirely), matching the user's own ~40% estimate.        │
+│ • install.sh now generates and enables a systemd --user unit                │
+│   (aurora-futo-daemon.service): Restart=on-failure, RestartSec=3,           │
+│   StartLimitBurst=5/60s, WantedBy=default.target (starts at login).         │
+│   Skips gracefully on non-systemd systems (main.py's existing               │
+│   _ensure_futo_daemon() on-launch check still covers that case, just        │
+│   without mid-session crash recovery).                                     │
+│ • Installing it immediately surfaced a second real bug, not a               │
+│   hypothetical: aurora-futo-daemon resolved its own directory via           │
+│   `dirname "${BASH_SOURCE[0]}"`, which doesn't follow symlinks - fine when  │
+│   run directly from the repo (every manual restart all night did this by   │
+│   coincidence) but silently wrong when invoked via the ~/.local/bin symlink │
+│   install.sh itself creates and instructs users to run. Fixed with          │
+│   `dirname "$(readlink -f ...)"`. This means the documented "run            │
+│   aurora-futo-daemon &" instruction may never have worked correctly from    │
+│   PATH before this fix - only direct-path invocation did.                   │
+│ • Verified for real, not assumed: killed the running daemon process         │
+│   directly (kill -9) - systemd detected it and had a fully working,         │
+│   model-loaded daemon back within ~5 seconds, confirmed via a live decode   │
+│   ("phenomenal" -> correct) immediately after recovery, no manual action.   │
+│ • 55-test regression suite clean after.                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ MILESTONE 4b: CI/CD (not started)                                           │
 │ • GitHub Actions workflow running the headless suite (geometric-decoder     │
 │   path only — no container/GPU needed), for the "traction" audience.        │
 └─────────────────────────────────────────────────────────────────────────────┘

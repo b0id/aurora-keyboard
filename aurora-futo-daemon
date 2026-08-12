@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Launcher for FUTO Neural Swipe Daemon inside the ydotool-box container
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# Resolves through symlinks (readlink -f) rather than just dirname on
+# BASH_SOURCE - install.sh symlinks this into ~/.local/bin, and running it
+# from there via the bare `dirname` form silently resolves to the wrong
+# directory (~/.local/bin/aurora_keyboard/... instead of the real repo
+# path), which is invisible unless something actually checks the exit
+# code - systemd does, which is how this got caught.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if command -v distrobox &>/dev/null; then
     exec distrobox enter ydotool-box -- python3 "$SCRIPT_DIR/aurora_keyboard/swipe/futo_daemon.py" "$@"
 else
