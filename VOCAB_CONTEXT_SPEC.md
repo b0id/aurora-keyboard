@@ -160,10 +160,12 @@ Beam search itself is trie-constrained (deployment lexicon: an AOSP-format wordl
 
 **What changed from v1.0.0**: the 70k-word bucket index was originally drawn living entirely inside the daemon box. It now lives in a shared `lexicon.py` module imported by both the daemon's scorer *and* the geometric fallback decoder. Without this, every vocabulary improvement in this spec would only reach users who've installed the ~5GB executorch/distrobox container — which is not "available to all people," it's available to people who did a heavy optional install. See §5.2.
 
+**Update (2026-08-12)**: `lexicon.py` existed since Milestone 2, but `manager.py`'s `SwipeManager` wasn't actually wired to use it until now — it was still building the fallback decoder from the original 1,175-word `wordlist.txt`. This wasn't caught earlier because the fallback path is barely exercised while the daemon is healthy; it became visible only when the daemon died in a real incident (§5.1) and every swipe was quietly running on the small list for hours. Fixed: `SwipeManager.wordlist` now comes from `lexicon.get_lexicon(...).vocabulary` (~31K words). This surfaced a real performance gap too — building a `SwipeDecoder` over that vocabulary takes ~900ms (measured), so `get_geo_decoder()`'s previously-nonfunctional cache (`self._geo_decoders = {}` existed but was never actually read from) had to be made real, keyed by layout, so the rebuild only happens once per rotation/geometry change instead of on every swipe. Per-swipe fallback decode with the full vocabulary measured at ~56ms.
+
 ### Zero-Interference Guarantees
 - **No GUI Layout Alterations**: `CandidateBar`, `SwipeTrailOverlay`, `KeyButton`, and keyboard geometry managers remain completely unchanged.
 - **Protocol Backward-Compatibility**: The IPC JSON contract retains `raw_trail`, `key_positions`, and `top_n`. The new `context` and `session_meta` parameters are strictly optional. If omitted, the daemon behaves as a standard unigram decoder.
-- **Fallback Integrity**: If the daemon is unreachable, the fallback `SwipeDecoder` operates transparently with its expanded local wordlist (post-§5.2, this is no longer a stub 1,200-word list — see below).
+- **Fallback Integrity**: If the daemon is unreachable, the fallback `SwipeDecoder` operates transparently with the shared ~31K-word lexicon (fixed 2026-08-12, see above) — no longer the 1,175-word stub list.
 
 ---
 
@@ -238,11 +240,11 @@ v1.0.0 framed the target as "scale from 15,000 to 70,000+ words," which conflate
 
 This turns "scale to 70,000" from a committed deliverable into a **staged, evidence-gated goal** — which is what "achievable and realistic" means in practice here.
 
-### 5.2 Shared Lexicon Module (new in v1.1.0)
+### 5.2 Shared Lexicon Module (new in v1.1.0, both callers wired as of 2026-08-12)
 
 Create `aurora_keyboard/swipe/lexicon.py` as the single source of truth for vocabulary and indexing, imported by both:
 - `futo_daemon.py`'s contextual scorer (runs in the container), and
-- `decoder.py`'s geometric fallback (runs in-process, no container, no network) — currently stuck on a 1,200-word list that none of this spec's improvements would otherwise reach.
+- `decoder.py`'s geometric fallback via `manager.py`'s `SwipeManager` (runs in-process, no container, no network) — wired 2026-08-12; from Milestone 2 (2026-08-11) until then, `lexicon.py` existed but `manager.py` still built the fallback from the original 1,175-word `wordlist.txt`, unnoticed until a real daemon outage made the gap visible (§5.1).
 
 ```
 lexicon.py responsibilities:
@@ -253,7 +255,7 @@ lexicon.py responsibilities:
   - Reload atomically so an in-flight decode never sees a half-updated pool.
 ```
 
-This is the change that makes the spec's "available to all people, not just Aurora users" goal actually true: a first-time GitHub user who never installs the executorch container still gets the expanded, bucket-indexed vocabulary through the geometric decoder — not just the 1,200-word placeholder list it ships with today.
+This is the change that makes the spec's "available to all people, not just Aurora users" goal actually true: a first-time GitHub user who never installs the executorch container gets the expanded, bucket-indexed vocabulary through the geometric decoder — not just a 1,175-word placeholder list. **Confirmed working, not just designed**: `tests/test_swipe_e2e.py::test_swipe_manager_fallback_uses_shared_lexicon` verifies the fallback resolves `"infrastructure"` (absent from the old bundled list) with the daemon unreachable.
 
 #### Data Integrity (new in v1.1.0, added 2026-08-11)
 
@@ -560,11 +562,12 @@ This section exists because Aurora is the user's **only working input method** o
 │   • FUTO's own numbers show +0.55-0.76pt top-1 over encoder-only — worth    │
 │     doing only after 3a/3b are measured and only if still worthwhile        │
 │                                                                              │
-│ Portability note: none of 3a-3c reach the geometric fallback (no neural     │
-│ models there by design, §3). The fallback's context-awareness, if wanted    │
-│ later, would still need a lightweight non-neural approach (e.g. a small     │
-│ bigram table) — deferred, not blocking, since §1 tenet 4 prioritizes this   │
-│ tablet's working input method first.                                       │
+│ Portability note: none of 3a-3c reach the geometric fallback's *decoding*   │
+│ algorithm (no neural models there by design, §3) - but see Milestone 4b    │
+│ below, which fixed the fallback's *vocabulary* to be the shared lexicon    │
+│ instead of the small bundled list, independent of 3a-3c. The fallback's    │
+│ context-awareness, if wanted later, would still need a lightweight         │
+│ non-neural approach (e.g. a small bigram table) — deferred, not blocking.  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ MILESTONE 4a: Daemon Supervision — DONE 2026-08-12                          │
 │ Triggered by a real incident, not proactive hardening: the daemon died      │
@@ -594,7 +597,24 @@ This section exists because Aurora is the user's **only working input method** o
 │   ("phenomenal" -> correct) immediately after recovery, no manual action.   │
 │ • 55-test regression suite clean after.                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ MILESTONE 4b: CI/CD (not started)                                           │
+│ MILESTONE 4b: Fallback Reaches the Shared Lexicon — DONE 2026-08-12         │
+│ Also incident-motivated: same outage that drove 4a showed the fallback's    │
+│ small vocabulary makes daemon-down degradation much worse than it needs    │
+│ to be. lexicon.py existed since Milestone 2 but manager.py was never       │
+│ actually wired to use it (§5.2 update).                                    │
+│ • SwipeManager.wordlist now sources from lexicon.get_lexicon(...) (~31K    │
+│   words) instead of the original 1,175-word wordlist.txt.                  │
+│ • Found and fixed a related latency trap before it shipped: building a     │
+│   SwipeDecoder over the full vocabulary measured at ~900ms - the           │
+│   `_geo_decoders` cache dict existed but was never actually read from, so   │
+│   this would have rebuilt on every single swipe. Made the cache real,      │
+│   keyed by layout - rebuild only on rotation/geometry change, not per      │
+│   swipe. Per-swipe fallback decode with the full vocabulary: ~56ms.        │
+│ • New tests (test_swipe_manager_fallback_uses_shared_lexicon,              │
+│   test_geo_decoder_cached_by_layout) confirm both the vocabulary fix and   │
+│   the caching fix - not just one or the other. 57-test suite clean.        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ MILESTONE 4c: CI/CD (not started)                                           │
 │ • GitHub Actions workflow running the headless suite (geometric-decoder     │
 │   path only — no container/GPU needed), for the "traction" audience.        │
 └─────────────────────────────────────────────────────────────────────────────┘

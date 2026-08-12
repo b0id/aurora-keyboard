@@ -3,8 +3,8 @@ Unified SwipeManager orchestrating the FUTO neural backend and geometric decoder
 """
 
 from typing import Tuple, List
-from .decoder import SwipeDecoder
-from .wordlist import load_wordlist
+from .decoder import SwipeDecoder, standard_qwerty_key_positions
+from .lexicon import get_lexicon
 from .futo_client import FutoSwipeClient
 
 
@@ -13,12 +13,28 @@ class SwipeManager:
 
     def __init__(self):
         self.futo_client = FutoSwipeClient()
-        self.wordlist = load_wordlist()
+        # Shared lexicon.py vocabulary (VOCAB_CONTEXT_SPEC.md sec5.2), not
+        # the original 1,175-word bundled wordlist.txt - this is what
+        # actually makes "available to all people, not just Aurora users"
+        # true, and what keeps a daemon outage from degrading to a
+        # decoder that structurally can't produce most complex words (a
+        # real incident, not hypothetical - see sec5.1). Word validity
+        # only depends on the alphabet, not live geometry, so a canonical
+        # reference layout is fine here (same pattern futo_daemon.py uses).
+        self.wordlist = get_lexicon(standard_qwerty_key_positions()).vocabulary
         self._geo_decoders = {}
 
     def get_geo_decoder(self, key_positions: dict) -> SwipeDecoder:
-        # Cache decoder instance by key count or layout
-        return SwipeDecoder(key_positions, self.wordlist)
+        # Cached by layout - building a SwipeDecoder over the full ~31K-word
+        # vocabulary takes ~900ms (measured), so rebuilding it on every
+        # swipe would make the fallback path unusably slow. Only rebuilt
+        # when the real key geometry actually changes (e.g. rotation).
+        cache_key = tuple(sorted(key_positions.items()))
+        decoder = self._geo_decoders.get(cache_key)
+        if decoder is None:
+            decoder = SwipeDecoder(key_positions, self.wordlist)
+            self._geo_decoders = {cache_key: decoder}  # single-entry cache
+        return decoder
 
     def decode(
         self,

@@ -53,6 +53,41 @@ class TestSwipeIntegration(unittest.TestCase):
         self.assertEqual(backend, "geometric")
         self.assertIn("hello", candidates)
 
+    def test_swipe_manager_fallback_uses_shared_lexicon(self):
+        # The fallback used to be stuck on the 1,175-word bundled
+        # wordlist.txt (couldn't produce "infrastructure" at all, a real
+        # incident - see VOCAB_CONTEXT_SPEC.md sec5.1). It should now use
+        # the shared ~31K-word lexicon like the neural daemon does.
+        manager = SwipeManager()
+        manager.futo_client.socket_path = "/tmp/non_existent_swipe_test.sock"
+        self.assertGreater(len(manager.wordlist), 10000)
+
+        key_pos = standard_qwerty_key_positions()
+        from aurora_keyboard.swipe.trajectory import synthesize_swipe
+        trail = synthesize_swipe("infrastructure", key_pos, jitter=0.0, seed=42)
+        points = [(x, y) for x, y, _ in trail]
+        candidates, backend = manager.decode(
+            raw_points=points,
+            raw_trail=trail,
+            key_positions=key_pos,
+            top_n=5
+        )
+        self.assertEqual(backend, "geometric")
+        self.assertIn("infrastructure", candidates)
+
+    def test_geo_decoder_cached_by_layout(self):
+        manager = SwipeManager()
+        key_pos_a = standard_qwerty_key_positions()
+        key_pos_b = dict(key_pos_a)
+        key_pos_b["a"] = (key_pos_a["a"][0] + 100, key_pos_a["a"][1])  # different layout
+
+        d1 = manager.get_geo_decoder(key_pos_a)
+        d2 = manager.get_geo_decoder(key_pos_a)
+        self.assertIs(d1, d2, "same key_positions should reuse the cached decoder")
+
+        d3 = manager.get_geo_decoder(key_pos_b)
+        self.assertIsNot(d1, d3, "different key_positions should rebuild the decoder")
+
     def test_futo_daemon_live_if_active(self):
         client = FutoSwipeClient()
         if client.is_available():
