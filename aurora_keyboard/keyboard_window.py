@@ -66,6 +66,7 @@ class AuroraKeyboardWindow(QWidget):
 
         self.badge = FloatingBadge(self)
         self._drag_pos = None
+        self._drag_locked = False
 
         # Swipe gesture state
         self._swipe_points = []
@@ -147,6 +148,31 @@ class AuroraKeyboardWindow(QWidget):
         # Drag Handle Grip
         self.drag_label = DragHandleLabel("❖ Drag", self)
         bar_layout.addWidget(self.drag_label)
+
+        # Drag Lock Toggle - prevents accidental repositioning from a
+        # stray touch on the window background (padding/gaps between keys
+        # trigger a full window drag today unless this is locked).
+        self.drag_lock_btn = QPushButton("🔓")
+        self.drag_lock_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.drag_lock_btn.setFixedSize(28, 28)
+        self.drag_lock_btn.setCheckable(True)
+        self.drag_lock_btn.setToolTip("Lock keyboard position (prevents accidental dragging)")
+        self.drag_lock_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(56, 189, 248, 0.2);
+                border: 1px solid rgba(56, 189, 248, 0.5);
+                color: #38bdf8;
+                font-size: 12px;
+                border-radius: 6px;
+            }
+            QPushButton:checked {
+                background: rgba(248, 113, 113, 0.25);
+                border: 1px solid rgba(248, 113, 113, 0.6);
+                color: #f87171;
+            }
+        """)
+        self.drag_lock_btn.toggled.connect(self.set_drag_locked)
+        bar_layout.addWidget(self.drag_lock_btn)
 
         # Quick Actions
         actions = [
@@ -783,7 +809,21 @@ class AuroraKeyboardWindow(QWidget):
             self.badge.hide()
         self.show_keyboard()
 
+    def set_drag_locked(self, locked: bool):
+        """Toggle whether the keyboard can be repositioned at all. A
+        background click/tap (padding, gaps between keys) triggers a full
+        window drag via mousePressEvent below unless locked - the actual
+        cause of accidental repositioning on a touchscreen, not just a
+        theoretical risk. Locking also disables the dedicated ❖ Drag
+        handle, so it's a genuine "nothing moves" guarantee, not just a
+        narrower catch-all."""
+        self._drag_locked = locked
+        self.drag_lock_btn.setText("🔒" if locked else "🔓")
+        self.drag_label.setEnabled(not locked)
+
     def mousePressEvent(self, event):
+        if self._drag_locked:
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             wh = self.windowHandle()
             if wh and hasattr(wh, 'startSystemMove'):

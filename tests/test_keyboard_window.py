@@ -5,7 +5,8 @@ Integration tests for AuroraKeyboardWindow UI, widgets, and layout switching.
 import sys
 import unittest
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QEvent, QPointF
+from PyQt6.QtGui import QMouseEvent
 
 from aurora_keyboard.keyboard_window import AuroraKeyboardWindow
 
@@ -87,6 +88,33 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
             self.assertIsNotNone(prof)
             self.assertEqual(prof.size, (1000, 350))
             self.assertEqual(prof.pos, (50, 400))
+
+    def test_drag_lock_prevents_background_click_drag(self):
+        # A click on window background (not a key, not the drag handle -
+        # e.g. padding or a gap between keys) starts a full window drag via
+        # mousePressEvent unless locked. Verified by calling the handler
+        # directly with a constructed event, not live input simulation.
+        self.assertFalse(self.window._drag_locked)
+
+        self.window.set_drag_locked(True)
+        self.assertTrue(self.window._drag_locked)
+        self.assertEqual(self.window.drag_lock_btn.text(), "🔒")
+        self.assertFalse(self.window.drag_label.isEnabled())
+
+        pos = QPointF(50, 50)
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonPress, pos, pos,
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+        )
+        self.window.mousePressEvent(event)
+        self.assertIsNone(getattr(self.window, "_drag_pos", None))
+
+    def test_drag_lock_toggle_restores_normal_behavior(self):
+        self.window.set_drag_locked(True)
+        self.window.set_drag_locked(False)
+        self.assertFalse(self.window._drag_locked)
+        self.assertEqual(self.window.drag_lock_btn.text(), "🔓")
+        self.assertTrue(self.window.drag_label.isEnabled())
 
     def test_minimize_and_restore(self):
         self.window.show()
