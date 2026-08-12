@@ -96,16 +96,21 @@ try:
 except Exception as err:
     print(f"[FUTO Daemon Warning] Context LM could not be loaded: {err}", file=sys.stderr, flush=True)
 
-# magic_macaw decoder refinement (Milestone 3c, VOCAB_CONTEXT_SPEC.md sec3c) -
-# a small net positive with real trade-offs (measured: 24/31 -> 25/31 top-1
-# on a mixed word set; fixed some words, broke one), not a strict
-# improvement on every word. Optional, same graceful-degradation pattern.
-try:
-    pte_dec = hf_hub_download("futo-org/futo-swipe", "magic_macaw/model_fp32.pte")
-    _DECODER_REFINER = load_decoder_refiner(lambda: Runtime.get().load_program(pte_dec))
-    print(f"[FUTO Daemon] Successfully loaded magic_macaw decoder refiner.", flush=True)
-except Exception as err:
-    print(f"[FUTO Daemon Warning] Decoder refiner could not be loaded: {err}", file=sys.stderr, flush=True)
+# magic_macaw decoder refinement (Milestone 3c, VOCAB_CONTEXT_SPEC.md sec3c).
+# Disabled by default (2026-08-12): measured as a net wash, not a clean win -
+# fixed some words ("wonderful", "fox"), broke a previously-perfect one
+# ("functionality"), combined net accuracy across both test sets was even
+# (55/62 either way), and cost real latency (~14ms -> ~51ms mean) for it.
+# Code is fully implemented and tested; set AURORA_ENABLE_DECODER_REFINER=1
+# to opt back in if real-world use suggests it's worth the trade-off.
+_DECODER_REFINER_ENABLED = os.environ.get("AURORA_ENABLE_DECODER_REFINER") == "1"
+if _DECODER_REFINER_ENABLED:
+    try:
+        pte_dec = hf_hub_download("futo-org/futo-swipe", "magic_macaw/model_fp32.pte")
+        _DECODER_REFINER = load_decoder_refiner(lambda: Runtime.get().load_program(pte_dec))
+        print(f"[FUTO Daemon] Successfully loaded magic_macaw decoder refiner.", flush=True)
+    except Exception as err:
+        print(f"[FUTO Daemon Warning] Decoder refiner could not be loaded: {err}", file=sys.stderr, flush=True)
 
 
 def _resample(px, py, pt, T=64):

@@ -591,9 +591,12 @@ This section exists because Aurora is the user's **only working input method** o
 │     number is a small *average* over a much larger corpus, which is        │
 │     consistent with real per-word volatility that can net to zero on any   │
 │     given smaller sample, not a sign anything is implemented wrong.        │
-│   • Left enabled pending the user's call - correctly implemented, fully    │
-│     tested, and available, but not a clearly-justified default the way    │
-│     3a/3b were given the measured wash + latency cost.                     │
+│   • User's call (2026-08-12): disabled by default. Gated behind           │
+│     AURORA_ENABLE_DECODER_REFINER=1 - code is fully implemented, tested,  │
+│     and available to opt back into, just not active unless explicitly     │
+│     requested. Confirmed after disabling: daemon loads encoder + context   │
+│     LM only, M1 harness back to 100%/100%, latency back to ~14ms mean,     │
+│     exactly the 3a/3b baseline.                                           │
 │                                                                              │
 │ Portability note: none of 3a-3c reach the geometric fallback's *decoding*   │
 │ algorithm (no neural models there by design, §3) - but see Milestone 4b    │
