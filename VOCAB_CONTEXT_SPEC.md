@@ -564,9 +564,36 @@ This section exists because Aurora is the user's **only working input method** o
 │     and a malformed-encoding custom_words.txt could have crashed the       │
 │     lexicon rebuild (not caught by the existing OSError handler).          │
 │                                                                              │
-│ 3c. (Optional, smaller win) magic_macaw decoder refinement                  │
-│   • FUTO's own numbers show +0.55-0.76pt top-1 over encoder-only — worth    │
-│     doing only after 3a/3b are measured and only if still worthwhile        │
+│ 3c. magic_macaw decoder refinement — DONE 2026-08-12, honest mixed result   │
+│   • Validated first, same method as 3a/3b: loaded the real model, probed   │
+│     its actual I/O shape empirically (confirmed [1,32,92] -> [1,32,27],    │
+│     matching decoder.cpp's documented concat(log_emissions,coeffs,lambda)  │
+│     recipe exactly) before writing any production code.                    │
+│   • New aurora_keyboard/swipe/decoder_refine.py (DecoderRefiner) - a pure  │
+│     refinement step between encoder and beam search, no changes needed to  │
+│     beam_search.py/trie.py since output shape matches what they already    │
+│     consume. Wired into futo_daemon.py with the same graceful-degradation  │
+│     pattern as the other two optional models (separate try/except; a      │
+│     refine() failure at request time falls back to encoder-only for that   │
+│     decode, not a broken response).                                       │
+│   • Measured honestly, not stopped at the first flattering number: a       │
+│     31-word mixed-length set went 24/31 -> 25/31 (fixed "wonderful" and    │
+│     "fox", broke "world") - looked like a clean net positive. But re-      │
+│     running the Milestone 1 harness (31 multisyllable words, previously    │
+│     saturated at 100%) showed it ALSO regressed: "functionality" ->        │
+│     "functionally" (rank 2, not gone, but no longer top-1), dropping that  │
+│     harness to 96.8%. Combined across both 62-word samples: 55/62 either   │
+│     way - a wash, not the win the first test alone suggested.              │
+│   • Latency cost is real: ~14ms -> ~51ms mean (running a second model per  │
+│     decode), still comfortably fast in absolute terms but a genuine        │
+│     3-4x increase for a net-neutral accuracy change on measured data.      │
+│   • This matches FUTO's own published +0.55-0.76pt almost exactly - their  │
+│     number is a small *average* over a much larger corpus, which is        │
+│     consistent with real per-word volatility that can net to zero on any   │
+│     given smaller sample, not a sign anything is implemented wrong.        │
+│   • Left enabled pending the user's call - correctly implemented, fully    │
+│     tested, and available, but not a clearly-justified default the way    │
+│     3a/3b were given the measured wash + latency cost.                     │
 │                                                                              │
 │ Portability note: none of 3a-3c reach the geometric fallback's *decoding*   │
 │ algorithm (no neural models there by design, §3) - but see Milestone 4b    │

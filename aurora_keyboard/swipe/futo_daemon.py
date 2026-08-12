@@ -26,13 +26,18 @@ try:
     from .lexicon import get_lexicon
     from .beam_search import ScoringParams, decode as beam_decode
     from .context_lm import load_context_lm
+    from .decoder_refine import load_decoder_refiner
 except ImportError:
     from lexicon import get_lexicon
     from beam_search import ScoringParams, decode as beam_decode
     from context_lm import load_context_lm
+    from decoder_refine import load_decoder_refiner
 
 # Published encoder-only constants (scoring.json, VOCAB_CONTEXT_SPEC.md sec6.1)
-_SCORING = ScoringParams()
+_SCORING_ENCODER_ONLY = ScoringParams()
+# Published encoder+decoder constants (scoring.json) - used when the
+# magic_macaw refiner (Milestone 3c) is loaded and actually applied.
+_SCORING_WITH_DECODER = ScoringParams(gamma=0.1081, lam=0.0335, beta=2.1994, gamma_prune=0.4234, beta_prune=1.0382)
 # Published encoder+contextlm alpha weight (scoring.json) - only applied
 # when a request actually supplies context and the context LM loaded.
 _CONTEXT_ALPHA = 0.6459
@@ -58,6 +63,7 @@ def _canonical_key_positions():
 _ENCODER = None
 _LEXICON = None
 _CONTEXT_LM = None
+_DECODER_REFINER = None
 
 try:
     import torch
@@ -89,6 +95,17 @@ try:
     print(f"[FUTO Daemon] Successfully loaded hungry_jellyfish context LM ({_CONTEXT_LM.num_exact} exact embeddings).", flush=True)
 except Exception as err:
     print(f"[FUTO Daemon Warning] Context LM could not be loaded: {err}", file=sys.stderr, flush=True)
+
+# magic_macaw decoder refinement (Milestone 3c, VOCAB_CONTEXT_SPEC.md sec3c) -
+# a small net positive with real trade-offs (measured: 24/31 -> 25/31 top-1
+# on a mixed word set; fixed some words, broke one), not a strict
+# improvement on every word. Optional, same graceful-degradation pattern.
+try:
+    pte_dec = hf_hub_download("futo-org/futo-swipe", "magic_macaw/model_fp32.pte")
+    _DECODER_REFINER = load_decoder_refiner(lambda: Runtime.get().load_program(pte_dec))
+    print(f"[FUTO Daemon] Successfully loaded magic_macaw decoder refiner.", flush=True)
+except Exception as err:
+    print(f"[FUTO Daemon Warning] Decoder refiner could not be loaded: {err}", file=sys.stderr, flush=True)
 
 
 def _resample(px, py, pt, T=64):
@@ -191,8 +208,19 @@ def decode_swipe(raw_trail, key_positions, top_n=5, context=None):
             # decode comes out garbled (Milestone 1 measured 35.5% top-1;
             # see VOCAB_CONTEXT_SPEC.md sec2.1 for the full comparison).
             log_probs = _compact_log_probs(log_emissions, letters_sorted)
+            scoring = _SCORING_ENCODER_ONLY
+            if _DECODER_REFINER is not None:
+                try:
+                    log_probs = _DECODER_REFINER.refine(log_probs, coeffs[0].numpy(), lam[0].numpy())
+                    scoring = _SCORING_WITH_DECODER
+                except Exception as err:
+                    # Refinement failing degrades to the encoder-only path,
+                    # not a broken decode - same graceful-degradation rule
+                    # as every other optional model here.
+                    print(f"[FUTO Daemon] Decoder refinement failed, falling back to encoder-only: {err}", file=sys.stderr, flush=True)
+
             pool_size = _RERANK_POOL if (context and _CONTEXT_LM is not None) else top_n
-            results = beam_decode(log_probs, lexicon.trie, _SCORING, beam_width=100, top_k=pool_size)
+            results = beam_decode(log_probs, lexicon.trie, scoring, beam_width=100, top_k=pool_size)
             return _rerank_with_context(results, context, top_n)
         except Exception as err:
             print(f"[FUTO Daemon] Error in neural decode: {err}", file=sys.stderr, flush=True)
