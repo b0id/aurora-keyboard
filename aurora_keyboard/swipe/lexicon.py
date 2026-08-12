@@ -38,12 +38,25 @@ KeyPositions = dict[str, tuple[float, float]]
 
 CUSTOM_WORDS_PATH = Path(os.path.expanduser("~/.config/aurora-keyboard/custom_words.txt"))
 
+# Pinned FUTO model revision (VOCAB_CONTEXT_SPEC.md "Staying Current with
+# Upstream"). Single source of truth - futo_daemon.py's hf_hub_download
+# calls use this exact constant too, so the host-side vocab read here and
+# the container-side model downloads can never silently drift onto two
+# different upstream versions. Bumping this is a deliberate act (re-run the
+# empirical validation scripts before moving it), never automatic - a
+# fresh install, cleared cache, or container rebuild pulling a different
+# FUTO revision than what our code's hardcoded shapes/constants were
+# validated against would silently degrade, not crash.
+FUTO_MODEL_REVISION = "18328c3042b066952c0936b3771d492fe2ec289a"
+
 # huggingface_hub's cache layout. distrobox shares the host's $HOME with the
 # ydotool-box container by default, so if the FUTO daemon has ever run and
 # downloaded its vocab, this file is reachable from plain host Python too -
 # no torch/executorch/huggingface_hub import needed here, just a text read.
+# Pinned to the exact revision (not a wildcard) so this can't pick up a
+# stale second snapshot left on disk from a previous pin.
 _FUTO_VOCAB_GLOB = os.path.expanduser(
-    "~/.cache/huggingface/hub/models--futo-org--futo-swipe/snapshots/*/hungry_jellyfish/vocab.txt"
+    f"~/.cache/huggingface/hub/models--futo-org--futo-swipe/snapshots/{FUTO_MODEL_REVISION}/hungry_jellyfish/vocab.txt"
 )
 
 # Missing bundled words are inserted at this rank when a real frequency-

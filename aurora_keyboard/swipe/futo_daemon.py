@@ -23,12 +23,12 @@ SOCKET_PATH = "/tmp/futo_swipe.sock"
 # see aurora-futo-daemon), so relative import falls back to a plain one;
 # Python auto-adds this file's own directory to sys.path for a direct run.
 try:
-    from .lexicon import get_lexicon
+    from .lexicon import get_lexicon, FUTO_MODEL_REVISION
     from .beam_search import ScoringParams, decode as beam_decode
     from .context_lm import load_context_lm
     from .decoder_refine import load_decoder_refiner
 except ImportError:
-    from lexicon import get_lexicon
+    from lexicon import get_lexicon, FUTO_MODEL_REVISION
     from beam_search import ScoringParams, decode as beam_decode
     from context_lm import load_context_lm
     from decoder_refine import load_decoder_refiner
@@ -71,11 +71,11 @@ try:
     from huggingface_hub import hf_hub_download
 
     print("[FUTO Daemon] Downloading/loading FUTO Swipe neural models...", flush=True)
-    pte_enc = hf_hub_download("futo-org/futo-swipe", "honorable_sturgeon/model_fp32.pte")
+    pte_enc = hf_hub_download("futo-org/futo-swipe", "honorable_sturgeon/model_fp32.pte", revision=FUTO_MODEL_REVISION)
     # Ensures the file lexicon.py looks for (via its own cache glob) is
     # present; lexicon.py reads it independently so it stays host-
     # importable without a huggingface_hub dependency.
-    hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt")
+    hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt", revision=FUTO_MODEL_REVISION)
 
     _ENCODER = Runtime.get().load_program(pte_enc).load_method("forward")
     _LEXICON = get_lexicon(_canonical_key_positions())
@@ -87,8 +87,8 @@ except Exception as err:
 # separate optional model. Failure here degrades gracefully to no context
 # scoring (same pattern as the encoder above), never breaks core decoding.
 try:
-    pte_ctx = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/context_lm.pte")
-    ctx_vocab_path = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt")
+    pte_ctx = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/context_lm.pte", revision=FUTO_MODEL_REVISION)
+    ctx_vocab_path = hf_hub_download("futo-org/futo-swipe", "hungry_jellyfish/vocab.txt", revision=FUTO_MODEL_REVISION)
     with open(ctx_vocab_path, "r", encoding="utf-8") as f:
         _ctx_vocab_words = [line.rstrip("\n").rstrip("\r") for line in f]
     _CONTEXT_LM = load_context_lm(lambda: Runtime.get().load_program(pte_ctx), _ctx_vocab_words)
@@ -106,7 +106,7 @@ except Exception as err:
 _DECODER_REFINER_ENABLED = os.environ.get("AURORA_ENABLE_DECODER_REFINER") == "1"
 if _DECODER_REFINER_ENABLED:
     try:
-        pte_dec = hf_hub_download("futo-org/futo-swipe", "magic_macaw/model_fp32.pte")
+        pte_dec = hf_hub_download("futo-org/futo-swipe", "magic_macaw/model_fp32.pte", revision=FUTO_MODEL_REVISION)
         _DECODER_REFINER = load_decoder_refiner(lambda: Runtime.get().load_program(pte_dec))
         print(f"[FUTO Daemon] Successfully loaded magic_macaw decoder refiner.", flush=True)
     except Exception as err:

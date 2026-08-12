@@ -658,7 +658,21 @@ This section exists because Aurora is the user's **only working input method** o
 
 ---
 
-## 11. Verification & Review Checklist
+## 11. Staying Current with Upstream (new 2026-08-12)
+
+This project now depends on FUTO's models and their exact, mostly-*undocumented* I/O contracts more deeply than a typical dependency — several critical constants (`num_exact=32768`, `embed_dim=16`, `max_context_len=16`, decoder `input_dim=92`, all of `scoring.json`'s weights) aren't published anywhere; they were discovered by loading the real models and probing them (§2.1, §6, Milestone 3b/3c). That makes an unpinned, silently-drifting dependency on `futo-org/futo-swipe` a real risk, not a theoretical one: a fresh install, a cleared HuggingFace cache, or a container rebuild pulling a newer upstream revision would carry code still using constants validated against a different, older one — degrading silently, not crashing.
+
+**Pinned, not automatic.** `lexicon.py`'s `FUTO_MODEL_REVISION` constant (currently `18328c3042b066952c0936b3771d492fe2ec289a`) is the single source of truth, passed as `revision=` to every `hf_hub_download` call in `futo_daemon.py` and used directly (no wildcard) in `lexicon.py`'s own vocab-file glob, so the host-side read and the container-side downloads can never point at two different upstream versions. Nothing upgrades this automatically — bumping it is a deliberate act, done the same way every empirical claim in this spec was established: re-run the validation scripts (probe real shapes, compare before/after accuracy on the M1 harness and a broader mixed-word set) before moving the pin, not after.
+
+**Two upstream sources matter, not just the model weights:**
+- `huggingface.co/futo-org/futo-swipe` — the weights and `scoring.json`. Check via the HF API's `lastModified`/commit history for the repo, or just periodically try `hf_hub_download(..., revision=None)` in a throwaway script and diff the resolved commit against the pin.
+- `gitlab.futo.org/keyboard/swipe-library` — the reference algorithm this project's beam search (§6.2), context LM scorer (§6.1), and decoder refiner (§10 Milestone 3c) were ported from. A formula or calling-convention change here matters even without a model file changing.
+
+No automated watcher is set up for this (deliberately — an automatic version bump with no re-validation would recreate exactly the silent-drift risk this section exists to prevent). Treat it as a periodic manual check, same cadence as other project maintenance.
+
+---
+
+## 12. Verification & Review Checklist
 
 - [ ] Does this specification satisfy all requirements without touching UI styling or layouts?
 - [ ] Are the 4–5 syllable vocabulary requirements thoroughly addressed?
