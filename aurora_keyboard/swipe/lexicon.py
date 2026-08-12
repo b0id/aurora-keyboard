@@ -92,12 +92,18 @@ def _load_futo_vocab(key_positions: KeyPositions) -> list[str]:
 
 
 def _load_custom_words(key_positions: KeyPositions) -> list[str]:
+    """A malformed custom_words.txt (bad encoding, permission race, file
+    disappearing mid-read) degrades to "no custom words" rather than
+    breaking the lexicon rebuild - this file is now re-read live on every
+    edit (get_lexicon()'s hot-reload), not just once at startup, so a
+    transient or malformed read here can't be allowed to take the whole
+    decode pipeline down with it."""
     if not CUSTOM_WORDS_PATH.exists():
         return []
     try:
         with open(CUSTOM_WORDS_PATH, "r", encoding="utf-8") as f:
             lines = f.readlines()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return []
     return _sanitize_lines(lines, key_positions)
 
@@ -191,29 +197,54 @@ class Lexicon:
 
 _lexicon_ref: Lexicon | None = None
 _reload_lock = threading.Lock()
+_custom_words_mtime: float | None = None  # None also means "file doesn't exist" - a stable, valid state
+
+
+def _custom_words_current_mtime() -> float | None:
+    try:
+        return CUSTOM_WORDS_PATH.stat().st_mtime
+    except OSError:
+        return None
 
 
 def get_lexicon(key_positions: KeyPositions) -> Lexicon:
-    """The current shared Lexicon, built on first call. A single module-
-    level reference assignment is atomic under CPython's GIL, so a caller
-    that grabs this reference and uses it for one decode never sees a
-    partially-rebuilt vocabulary, even if reload_lexicon() runs
+    """The current shared Lexicon. Built on first call, and transparently
+    rebuilt whenever custom_words.txt's mtime changes (VOCAB_CONTEXT_SPEC.md
+    sec6 hot-reload) - editing that file takes effect on the next decode
+    with no daemon restart, for both the neural daemon and the geometric
+    fallback, since both call this function rather than caching their own
+    copy of the vocabulary. The mtime check is a single stat() syscall, so
+    calling this on every decode request is intentional, not wasteful -
+    cheap enough not to need a separate polling thread.
+
+    A single module-level reference assignment is atomic under CPython's
+    GIL, so a caller that grabs this reference and uses it for one decode
+    never sees a partially-rebuilt vocabulary, even if a reload happens
     concurrently on another thread - it just keeps using the snapshot it
     already has until its own next call to get_lexicon()."""
-    global _lexicon_ref
-    if _lexicon_ref is None:
+    global _lexicon_ref, _custom_words_mtime
+    current_mtime = _custom_words_current_mtime()
+    if _lexicon_ref is None or current_mtime != _custom_words_mtime:
         with _reload_lock:
-            if _lexicon_ref is None:
+            current_mtime = _custom_words_current_mtime()
+            if _lexicon_ref is None or current_mtime != _custom_words_mtime:
                 _lexicon_ref = Lexicon(key_positions)
+                _custom_words_mtime = current_mtime
     return _lexicon_ref
 
 
 def reload_lexicon(key_positions: KeyPositions) -> Lexicon:
     """Build a brand new Lexicon fully off to the side, then atomically
     swap it in. Never mutates the live vocabulary/ranks/index in place -
-    a decode already in flight keeps the snapshot it captured."""
-    global _lexicon_ref
+    a decode already in flight keeps the snapshot it captured.
+
+    Manual/explicit reload - get_lexicon() already does this automatically
+    on custom_words.txt changes, so this is for callers (tests, tooling)
+    that want to force a rebuild right now rather than wait for the next
+    decode's mtime check."""
+    global _lexicon_ref, _custom_words_mtime
     new_lexicon = Lexicon(key_positions)
     with _reload_lock:
         _lexicon_ref = new_lexicon
+        _custom_words_mtime = _custom_words_current_mtime()
     return new_lexicon

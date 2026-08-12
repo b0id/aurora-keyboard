@@ -6,7 +6,10 @@ unittest, run directly:
     python3 -m unittest tests.test_lexicon
 """
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from aurora_keyboard.swipe import lexicon
 from aurora_keyboard.swipe.decoder import standard_qwerty_key_positions
@@ -111,6 +114,74 @@ class TestReloadAtomicity(unittest.TestCase):
         lexicon.reload_lexicon(key_positions)
 
         self.assertEqual(len(held.vocabulary), held_vocab_len)
+
+
+class TestCustomWordsHotReload(unittest.TestCase):
+    """VOCAB_CONTEXT_SPEC.md sec6 hot-reload - editing custom_words.txt
+    should take effect on the next get_lexicon() call, no restart needed.
+    Uses a temp file monkey-patched over CUSTOM_WORDS_PATH so this never
+    touches the real ~/.config/aurora-keyboard/custom_words.txt."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._orig_path = lexicon.CUSTOM_WORDS_PATH
+        lexicon.CUSTOM_WORDS_PATH = Path(self._tmpdir.name) / "custom_words.txt"
+        lexicon._lexicon_ref = None
+        lexicon._custom_words_mtime = None
+
+    def tearDown(self):
+        lexicon.CUSTOM_WORDS_PATH = self._orig_path
+        lexicon._lexicon_ref = None
+        lexicon._custom_words_mtime = None
+        self._tmpdir.cleanup()
+
+    def test_no_file_is_stable_no_op(self):
+        key_positions = standard_qwerty_key_positions()
+        first = lexicon.get_lexicon(key_positions)
+        second = lexicon.get_lexicon(key_positions)
+        self.assertIs(first, second, "no file present, nothing changed -> no rebuild")
+
+    def test_creating_file_triggers_reload(self):
+        key_positions = standard_qwerty_key_positions()
+        before = lexicon.get_lexicon(key_positions)
+        self.assertNotIn("zzyzxwordbrand", before.vocabulary)
+
+        lexicon.CUSTOM_WORDS_PATH.write_text("zzyzxwordbrand\n")
+        after = lexicon.get_lexicon(key_positions)
+
+        self.assertIsNot(before, after)
+        self.assertIn("zzyzxwordbrand", after.vocabulary)
+
+    def test_editing_file_triggers_reload(self):
+        key_positions = standard_qwerty_key_positions()
+        lexicon.CUSTOM_WORDS_PATH.write_text("firstword\n")
+        first = lexicon.get_lexicon(key_positions)
+        self.assertIn("firstword", first.vocabulary)
+
+        # Ensure a strictly later mtime even on coarse filesystem clocks.
+        new_mtime = (lexicon.CUSTOM_WORDS_PATH.stat().st_mtime or 0) + 1
+        lexicon.CUSTOM_WORDS_PATH.write_text("secondword\n")
+        os.utime(lexicon.CUSTOM_WORDS_PATH, (new_mtime, new_mtime))
+
+        second = lexicon.get_lexicon(key_positions)
+        self.assertIsNot(first, second)
+        self.assertIn("secondword", second.vocabulary)
+
+    def test_unchanged_file_does_not_rebuild(self):
+        key_positions = standard_qwerty_key_positions()
+        lexicon.CUSTOM_WORDS_PATH.write_text("stableword\n")
+        first = lexicon.get_lexicon(key_positions)
+        second = lexicon.get_lexicon(key_positions)
+        third = lexicon.get_lexicon(key_positions)
+        self.assertIs(first, second)
+        self.assertIs(second, third)
+
+    def test_malformed_encoding_degrades_gracefully(self):
+        key_positions = standard_qwerty_key_positions()
+        lexicon.CUSTOM_WORDS_PATH.write_bytes(b"\xff\xfe\x00bad-encoding")
+        # Must not raise - falls back to "no custom words" for this file.
+        result = lexicon.get_lexicon(key_positions)
+        self.assertIsNotNone(result)
 
 
 if __name__ == "__main__":

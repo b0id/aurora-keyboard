@@ -45,8 +45,8 @@ _RERANK_POOL = 20
 def _canonical_key_positions():
     """Reference layout used only to validate "is every letter in this
     word a normal a-z key" - not tied to any live keyboard's real pixel
-    geometry, which is why the shared lexicon only needs to be built once
-    at startup rather than per decode request."""
+    geometry, which is why the same reference layout works for every
+    decode request regardless of the caller's real key positions."""
     try:
         from .decoder import standard_qwerty_key_positions
     except ImportError:
@@ -173,7 +173,12 @@ def decode_swipe(raw_trail, key_positions, top_n=5, context=None):
             features = torch.from_numpy(_resample(px, py, pt)[None])
             log_emissions, coeffs, lam = _ENCODER.execute((features, keys_t, mask_t))
 
-            if _LEXICON is None:
+            # Re-fetched per request rather than reused from the startup-time
+            # _LEXICON snapshot: get_lexicon() transparently rebuilds when
+            # custom_words.txt changes (VOCAB_CONTEXT_SPEC.md sec6 hot-reload),
+            # and costs one stat() syscall when nothing changed.
+            lexicon = get_lexicon(_canonical_key_positions())
+            if lexicon is None:
                 return []
 
             # Trie-constrained CTC beam search (VOCAB_CONTEXT_SPEC.md sec6.2),
@@ -187,7 +192,7 @@ def decode_swipe(raw_trail, key_positions, top_n=5, context=None):
             # see VOCAB_CONTEXT_SPEC.md sec2.1 for the full comparison).
             log_probs = _compact_log_probs(log_emissions, letters_sorted)
             pool_size = _RERANK_POOL if (context and _CONTEXT_LM is not None) else top_n
-            results = beam_decode(log_probs, _LEXICON.trie, _SCORING, beam_width=100, top_k=pool_size)
+            results = beam_decode(log_probs, lexicon.trie, _SCORING, beam_width=100, top_k=pool_size)
             return _rerank_with_context(results, context, top_n)
         except Exception as err:
             print(f"[FUTO Daemon] Error in neural decode: {err}", file=sys.stderr, flush=True)

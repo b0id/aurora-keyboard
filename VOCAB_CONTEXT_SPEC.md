@@ -313,7 +313,8 @@ Equation 3 is scored during **trie-constrained CTC beam search** (beam width 100
 - Stored in standard plain-text / JSONL format at `~/.config/aurora-keyboard/custom_words.txt`.
 - Loaded through the shared `lexicon.py` module (§5.2) so both backends honor it, subject to the same validate-on-load and atomic-reload rules (§5.2 Data Integrity) — this file is user-edited, so it's the least trustworthy input source in the pipeline and gets no exception from those rules.
 - Users or automated tooling can add custom domain terms.
-- Whenever a user selects a suggestion from the candidate bar, its local frequency counter increments.
+- **Hot-reload: DONE (2026-08-12).** `lexicon.py`'s `get_lexicon()` checks the file's mtime (one `stat()` call) on every call and transparently rebuilds when it changes - both `futo_daemon.py` and `manager.py`'s geometric fallback re-fetch the lexicon per request, so editing the file takes effect on the very next swipe, no daemon restart. Verified live against the real running daemon: added a word, it was immediately findable with no restart; deleted it, it was immediately gone. 5 new tests (`tests/test_lexicon.py::TestCustomWordsHotReload`) cover creation, editing, no-op stability, and malformed-encoding graceful degradation (a real gap the hot-reload path exposed - a bad-encoding read previously wasn't caught and could have crashed the lexicon rebuild).
+- **Corrected claim**: the "local frequency counter increments on selection" behavior this bullet used to describe was never built - no code anywhere tracks candidate-bar selections into a frequency signal. **UserBoost (§6.1/§6.3) also isn't implemented as a scoring term at all** - `beam_search.py`'s `ScoringParams`/`decode()` has no boost field or additive term for custom words. In practice, a custom word today is *findable* (it's in the trie, in the vocabulary the letter-bucket/beam search searches) but gets no ranking advantage - it's appended last in `build_vocabulary()` (§5.2), so it gets the *lowest* frequency score of any word in the pool, competing purely on CTC path match quality. A real UserBoost term (and selection-frequency tracking) is unbuilt future work, not a shipped feature - corrected here since the previous wording implied otherwise.
 
 ---
 
@@ -555,8 +556,13 @@ This section exists because Aurora is the user's **only working input method** o
 │     an ordinary letter leaves it untouched, all matching sec4's rules      │
 │     exactly. Confirmed the live app wasn't running before any of this      │
 │     (zero disruption risk) and the geometric fallback needs no changes.    │
-│   • Still open: custom_words.txt hot-reload hookup through lexicon.py's    │
-│     already-built reload_lexicon() (§5.2) - infra exists, unused so far.   │
+│   • custom_words.txt hot-reload: DONE 2026-08-12, see §6 Dynamic User      │
+│     Lexicon - get_lexicon() itself now checks mtime per call rather than   │
+│     needing a separate watcher; benefits both backends automatically.      │
+│     Also caught and fixed: UserBoost was never actually a scoring term     │
+│     (custom words were findable but had no ranking advantage - see §6),    │
+│     and a malformed-encoding custom_words.txt could have crashed the       │
+│     lexicon rebuild (not caught by the existing OSError handler).          │
 │                                                                              │
 │ 3c. (Optional, smaller win) magic_macaw decoder refinement                  │
 │   • FUTO's own numbers show +0.55-0.76pt top-1 over encoder-only — worth    │

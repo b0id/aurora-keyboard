@@ -60,9 +60,10 @@ class TestSwipeIntegration(unittest.TestCase):
         # the shared ~31K-word lexicon like the neural daemon does.
         manager = SwipeManager()
         manager.futo_client.socket_path = "/tmp/non_existent_swipe_test.sock"
-        self.assertGreater(len(manager.wordlist), 10000)
 
         key_pos = standard_qwerty_key_positions()
+        from aurora_keyboard.swipe.lexicon import get_lexicon
+        self.assertGreater(len(get_lexicon(key_pos).vocabulary), 10000)
         from aurora_keyboard.swipe.trajectory import synthesize_swipe
         trail = synthesize_swipe("infrastructure", key_pos, jitter=0.0, seed=42)
         points = [(x, y) for x, y, _ in trail]
