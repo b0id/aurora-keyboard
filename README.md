@@ -61,8 +61,10 @@ If you've ever tried using a Linux tablet (Surface Pro, Dell Latitude Detachable
 Emits genuine physical `EV_KEY` hardware keystrokes directly into the Linux kernel via `/dev/uinput`. It works **universally across everything**: Kitty, Neovim, Firefox, Steam games, TTYs, and sandboxed Flatpaks without depending on IBus or XTest.
 
 ### 2. 🧠 State-of-the-Art Neural Swipe-to-Type
-Powered by **FUTO Swipe's** edge neural models (1D-CNN spatial encoder `honorable_sturgeon` + Transformer sequence decoder `magic_macaw`) running via ExecuTorch.
-* **Ultra-low latency**: $<25\text{ms}$ CPU inference time with time-aware $60\text{ Hz}$ kinematic curve resampling.
+Powered by **FUTO Swipe's** edge neural encoder (`honorable_sturgeon`, a 1D-CNN spatial model) running via ExecuTorch, decoded with a **trie-constrained CTC beam search** ported directly from FUTO's own published reference implementation — not a hand-rolled approximation.
+* **~14ms mean decode latency**, end-to-end socket round trip on this hardware — down from ~240ms before the beam search rewrite, measured on the project's own headless synthetic-trajectory benchmark.
+* **100% top-1 accuracy on multi-syllable words** (*infrastructure, characteristic, sustainability, implementation...*) on that same internal benchmark, up from 35.5% under the previous greedy-decode approach — see [`VOCAB_CONTEXT_SPEC.md`](VOCAB_CONTEXT_SPEC.md) for the full before/after methodology.
+* **Context-aware disambiguation**: an ephemeral rolling window of recently-typed words feeds FUTO's trained context language model (`hungry_jellyfish`), so ambiguous swipes are resolved using what you just typed (e.g. *"critical"* correctly biases a following swipe toward *"infrastructure"* over shape-alike distractors).
 * **Instant Auto-Commit**: Top candidate is immediately typed with a trailing space upon lifting your finger.
 * **One-Tap Candidate Chips**: Tap secondary chips to auto-backspace and substitute words instantly.
 * **Zero-Dependency Fallback**: If the neural daemon is offline, automatically falls back to an internal SHARK² geometric decoder.
@@ -92,7 +94,7 @@ Click **`🗕`** to collapse the keyboard into a sleek 160×160 floating touch b
 | Feature | Maliit / Squeekboard | Onboard (X11) | GNOME OSK | **Aurora Touch Keyboard** |
 |---|---|---|---|---|
 | **Terminal & Neovim Compatibility** | ❌ Broken | ⚠️ X11 Only | ❌ Broken | 🟢 **100% Universal (`/dev/uinput`)** |
-| **Neural Swipe-to-Type** | ❌ None | ❌ None | ❌ None | 🟢 **FUTO Neural (1D-CNN + Transformer)** |
+| **Neural Swipe-to-Type** | ❌ None | ❌ None | ❌ None | 🟢 **FUTO Neural + Trie Beam Search + Context LM** |
 | **Glowing Gesture Trail** | ❌ None | ❌ None | ❌ None | 🟢 **60 FPS Anti-Aliased Glow** |
 | **Continuous Terminal Chording** | ❌ Resets on Tap | ⚠️ Partial | ❌ Resets on Tap | 🟢 **Full Multi-Modifier Latching** |
 | **Wayland Focus Isolation** | ⚠️ Protocol-dependent | ❌ Focus Steals | ⚠️ Fixed Dock Only | 🟢 **Native (`WindowDoesNotAcceptFocus`)** |
@@ -136,10 +138,12 @@ flowchart TD
     end
 
     subgraph Gesture Decoding Pipeline
+        Ctx[RollingTokenContext<br/>FIFO of recent words] -.->|context| Client
         Btn -->|Raw Trail x,y,t| Client[FutoSwipeClient<br/>Unix Domain Socket]
-        Client -->|IPC /tmp/futo_swipe.sock| Daemon[futo_daemon<br/>1D-CNN + Transformer Inference]
+        Client -->|IPC /tmp/futo_swipe.sock| Daemon[futo_daemon<br/>1D-CNN Encoder + Trie-Constrained<br/>CTC Beam Search + Context LM]
         Daemon -->|Candidate Words| Client
         Client -->|Top Predictions| Bar
+        Bar -.->|committed word| Ctx
         Btn -.->|Offline Fallback| Fallback[SHARK² Geometric Decoder]
     end
 
