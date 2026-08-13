@@ -101,6 +101,12 @@ QPushButton.modifier-btn:checked {
     border: 1px solid #a78bfa;
     color: #ffffff;
 }
+QPushButton.modifier-btn[locked="true"] {
+    background: rgba(139, 92, 246, 0.95);
+    border: 2px solid #38bdf8;
+    color: #ffffff;
+    font-weight: bold;
+}
 
 QPushButton.space-btn {
     background: rgba(255, 255, 255, 0.06);
@@ -227,6 +233,12 @@ QPushButton.modifier-btn:checked {
     background: rgba(192, 132, 252, 0.6);
     color: #ffffff;
 }
+QPushButton.modifier-btn[locked="true"] {
+    background: #a855f7;
+    border: 2px solid #f43f5e;
+    color: #ffffff;
+    font-weight: bold;
+}
 
 QPushButton.nav-btn {
     color: #34d399;
@@ -313,9 +325,30 @@ QPushButton:pressed {
     color: #000000;
 }
 
+QPushButton.action-btn {
+    background: #2a1215;
+    border: 1px solid #5c1d24;
+    color: #fca5a5;
+}
+QPushButton.action-btn:hover {
+    background: #451a20;
+}
+
+QPushButton.modifier-btn {
+    background: #181818;
+    color: #a78bfa;
+    border: 1px solid #333333;
+}
 QPushButton.modifier-btn:checked {
     background: #333333;
     border-color: #666666;
+    color: #ffffff;
+}
+QPushButton.modifier-btn[locked="true"] {
+    background: #5b21b6;
+    border: 2px solid #38bdf8;
+    color: #ffffff;
+    font-weight: bold;
 }
 
 /* Floating Badge */
@@ -404,9 +437,29 @@ QPushButton:pressed {
     color: #ffffff;
 }
 
+QPushButton.action-btn {
+    background: #fee2e2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+}
+QPushButton.action-btn:hover {
+    background: #fecaca;
+}
+
+QPushButton.modifier-btn {
+    background: #ede9fe;
+    color: #6d28d9;
+    border: 1px solid #ddd6fe;
+}
 QPushButton.modifier-btn:checked {
-    background: #0284c7;
+    background: #8b5cf6;
     color: #ffffff;
+}
+QPushButton.modifier-btn[locked="true"] {
+    background: #6d28d9;
+    border: 2px solid #0284c7;
+    color: #ffffff;
+    font-weight: bold;
 }
 
 /* Floating Badge */

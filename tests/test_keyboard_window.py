@@ -90,15 +90,13 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
             self.assertEqual(prof.pos, (50, 400))
 
     def test_drag_lock_prevents_background_click_drag(self):
-        # A click on window background (not a key, not the drag handle -
-        # e.g. padding or a gap between keys) starts a full window drag via
-        # mousePressEvent unless locked. Verified by calling the handler
-        # directly with a constructed event, not live input simulation.
+        # A click on window background starts a full window drag via
+        # mousePressEvent unless locked.
         self.assertFalse(self.window._drag_locked)
 
         self.window.set_drag_locked(True)
         self.assertTrue(self.window._drag_locked)
-        self.assertEqual(self.window.drag_lock_btn.text(), "🔒")
+        self.assertFalse(self.window.drag_lock_btn.icon().isNull())
         self.assertFalse(self.window.drag_label.isEnabled())
 
         pos = QPointF(50, 50)
@@ -113,8 +111,103 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
         self.window.set_drag_locked(True)
         self.window.set_drag_locked(False)
         self.assertFalse(self.window._drag_locked)
-        self.assertEqual(self.window.drag_lock_btn.text(), "🔓")
+        self.assertFalse(self.window.drag_lock_btn.icon().isNull())
         self.assertTrue(self.window.drag_label.isEnabled())
+
+    def test_modifier_tri_state_and_double_tap_lock(self):
+        from aurora_keyboard.keyboard_window import MOD_STATE_OFF, MOD_STATE_LATCHED, MOD_STATE_LOCKED
+
+        # 1. Single tap -> LATCHED
+        self.window.toggle_modifier("LEFTCTRL")
+        self.assertEqual(self.window.modifier_states.get("LEFTCTRL"), MOD_STATE_LATCHED)
+        self.assertIn("LEFTCTRL", self.window.get_active_modifiers())
+
+        # 2. Quick tap within double-tap window -> LOCKED
+        self.window.toggle_modifier("LEFTCTRL")
+        self.assertEqual(self.window.modifier_states.get("LEFTCTRL"), MOD_STATE_LOCKED)
+        self.assertIn("LEFTCTRL", self.window.get_active_modifiers())
+
+        # 3. Simulate typing a character while locked -> stays LOCKED
+        char_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('type') == 'char'), None)
+        self.assertIsNotNone(char_btn)
+        self.window.handle_key_click(char_btn.key_info, char_btn)
+        self.assertEqual(self.window.modifier_states.get("LEFTCTRL"), MOD_STATE_LOCKED)
+
+        # 4. Single tap while locked -> transitions to OFF (single tap to escape lock)
+        self.window.toggle_modifier("LEFTCTRL")
+        self.assertEqual(self.window.modifier_states.get("LEFTCTRL"), MOD_STATE_OFF)
+        self.assertNotIn("LEFTCTRL", self.window.get_active_modifiers())
+
+    def test_multi_modifier_and_latched_auto_release(self):
+        from aurora_keyboard.keyboard_window import MOD_STATE_LATCHED
+
+        # Tap Ctrl then tap Shift (both active)
+        self.window.toggle_modifier("LEFTCTRL")
+        self.window.toggle_modifier("LEFTSHIFT")
+        self.assertEqual(self.window.modifier_states.get("LEFTCTRL"), MOD_STATE_LATCHED)
+        self.assertEqual(self.window.modifier_states.get("LEFTSHIFT"), MOD_STATE_LATCHED)
+        active = self.window.get_active_modifiers()
+        self.assertIn("LEFTCTRL", active)
+        self.assertIn("LEFTSHIFT", active)
+
+        # Typing a character consumes both latched modifiers
+        char_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('type') == 'char'), None)
+        self.window.handle_key_click(char_btn.key_info, char_btn)
+        self.assertEqual(len(self.window.get_active_modifiers()), 0)
+
+    def test_escape_clears_all_modifiers_and_caps(self):
+        from aurora_keyboard.keyboard_window import MOD_STATE_LOCKED
+
+        # Lock Ctrl, latch Shift, turn on Caps
+        self.window.modifier_states["LEFTCTRL"] = MOD_STATE_LOCKED
+        self.window.modifier_states["LEFTSHIFT"] = MOD_STATE_LOCKED
+        self.window.caps_active = True
+        self.window.update_key_labels()
+        self.window.update_modifier_buttons_visual()
+
+        # Find Esc button or call handle_key_click with escape
+        esc_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('type') == 'escape'), None)
+        if esc_btn:
+            self.window.handle_key_click(esc_btn.key_info, esc_btn)
+        else:
+            self.window.clear_all_modifiers()
+
+        self.assertEqual(len(self.window.get_active_modifiers()), 0)
+        self.assertFalse(self.window.caps_active)
+        self.assertFalse(self.window.shift_active)
+
+    def test_left_column_action_buttons(self):
+        # Verify action buttons exist in QWERTY layout
+        labels = [b.key_info.get("label") for b in self.window.key_buttons if hasattr(b, 'key_info')]
+        self.assertIn("Esc", labels)
+        self.assertIn("All", labels)
+        self.assertIn("Copy", labels)
+        self.assertIn("Paste", labels)
+
+    def test_auto_repeat_enabled_for_char_and_navigation_keys(self):
+        char_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('type') == 'char'), None)
+        self.assertIsNotNone(char_btn)
+        self.assertTrue(char_btn.autoRepeat())
+        self.assertEqual(char_btn.autoRepeatDelay(), 380)
+        self.assertEqual(char_btn.autoRepeatInterval(), 50)
+
+        nav_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('type') == 'key'), None)
+        self.assertIsNotNone(nav_btn)
+        self.assertTrue(nav_btn.autoRepeat())
+
+        # Modifiers should NOT auto-repeat
+        mod_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('type') == 'toggle_modifier'), None)
+        self.assertIsNotNone(mod_btn)
+        self.assertFalse(mod_btn.autoRepeat())
+
+    def test_super_key_pulses_application_menu(self):
+        from unittest.mock import patch
+        with patch.object(self.window.engine, "send_keycode") as mock_send:
+            super_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('mod') == 'LEFTMETA'), None)
+            self.assertIsNotNone(super_btn)
+            self.window.handle_key_click(super_btn.key_info, super_btn)
+            # Verify send_keycode was called with LEFTMETA keycode (125)
+            mock_send.assert_called_with(125)
 
     def test_minimize_and_restore(self):
         self.window.show()

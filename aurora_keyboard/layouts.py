@@ -1,10 +1,12 @@
 """
-Layout definitions for Aurora Touch Keyboard featuring full modifier key support (Ctrl, Alt, Super/Meta, Shift, AltGr, Caps Lock).
+Layout definitions for Aurora Touch Keyboard featuring full modifier key support (Ctrl, Alt, Super/Meta, Shift, AltGr, Caps Lock)
+and left-column quick actions (Esc, Select All, Copy, Paste).
 """
 
 QWERTY_ROWS = [
-    # Row 0: Numbers & Symbols
+    # Row 0: Esc + Numbers & Symbols + Backspace
     [
+        {"label": "Esc", "type": "escape", "span": 1.0, "class": "action-btn"},
         {"label": "1", "shift_label": "!", "type": "char"},
         {"label": "2", "shift_label": "@", "type": "char"},
         {"label": "3", "shift_label": "#", "type": "char"},
@@ -17,11 +19,12 @@ QWERTY_ROWS = [
         {"label": "0", "shift_label": ")", "type": "char"},
         {"label": "-", "shift_label": "_", "type": "char"},
         {"label": "=", "shift_label": "+", "type": "char"},
-        {"label": "⌫", "type": "key", "keycode": "BACKSPACE", "span": 1.5, "class": "action-btn"}
+        {"label": "⌫", "type": "key", "keycode": "BACKSPACE", "span": 1.4, "class": "action-btn"}
     ],
-    # Row 1: QWERTY
+    # Row 1: All (Select All) + Tab + QWERTY
     [
-        {"label": "Tab ↹", "type": "key", "keycode": "TAB", "span": 1.2, "class": "modifier-btn"},
+        {"label": "All", "type": "action_combo", "combo": (["LEFTCTRL"], "a"), "span": 1.0, "class": "action-btn"},
+        {"label": "Tab ↹", "type": "key", "keycode": "TAB", "span": 1.1, "class": "modifier-btn"},
         {"label": "q", "shift_label": "Q", "type": "char"},
         {"label": "w", "shift_label": "W", "type": "char"},
         {"label": "e", "shift_label": "E", "type": "char"},
@@ -34,11 +37,12 @@ QWERTY_ROWS = [
         {"label": "p", "shift_label": "P", "type": "char"},
         {"label": "[", "shift_label": "{", "type": "char"},
         {"label": "]", "shift_label": "}", "type": "char"},
-        {"label": "\\", "shift_label": "|", "type": "char"}
+        {"label": "\\", "shift_label": "|", "type": "char", "span": 0.9}
     ],
-    # Row 2: ASDF
+    # Row 2: Copy + Caps + ASDF + Enter
     [
-        {"label": "Caps", "type": "caps", "span": 1.3, "class": "modifier-btn"},
+        {"label": "Copy", "type": "action_combo", "combo": (["LEFTCTRL"], "c"), "span": 1.0, "class": "action-btn"},
+        {"label": "Caps", "type": "caps", "span": 1.2, "class": "modifier-btn"},
         {"label": "a", "shift_label": "A", "type": "char"},
         {"label": "s", "shift_label": "S", "type": "char"},
         {"label": "d", "shift_label": "D", "type": "char"},
@@ -50,11 +54,12 @@ QWERTY_ROWS = [
         {"label": "l", "shift_label": "L", "type": "char"},
         {"label": ";", "shift_label": ":", "type": "char"},
         {"label": "'", "shift_label": '"', "type": "char"},
-        {"label": "Enter ↵", "type": "key", "keycode": "ENTER", "span": 1.7, "class": "primary-btn"}
+        {"label": "Enter ↵", "type": "key", "keycode": "ENTER", "span": 1.6, "class": "primary-btn"}
     ],
-    # Row 3: ZXCV
+    # Row 3: Paste + Shift + ZXCV + Shift
     [
-        {"label": "Shift ⇧", "type": "shift", "span": 1.7, "class": "modifier-btn"},
+        {"label": "Paste", "type": "action_combo", "combo": (["LEFTCTRL"], "v"), "span": 1.0, "class": "action-btn"},
+        {"label": "Shift ⇧", "type": "shift", "span": 1.3, "class": "modifier-btn"},
         {"label": "z", "shift_label": "Z", "type": "char"},
         {"label": "x", "shift_label": "X", "type": "char"},
         {"label": "c", "shift_label": "C", "type": "char"},
@@ -65,14 +70,14 @@ QWERTY_ROWS = [
         {"label": ",", "shift_label": "<", "type": "char"},
         {"label": ".", "shift_label": ">", "type": "char"},
         {"label": "/", "shift_label": "?", "type": "char"},
-        {"label": "Shift ⇧", "type": "shift", "span": 1.7, "class": "modifier-btn"}
+        {"label": "Shift ⇧", "type": "shift", "span": 1.5, "class": "modifier-btn"}
     ],
     # Row 4: FULL MODIFIERS ROW (Ctrl, Super/Meta, Alt, Space, AltGr, Arrows)
     [
         {"label": "Ctrl", "type": "toggle_modifier", "mod": "LEFTCTRL", "span": 1.2, "class": "modifier-btn"},
         {"label": "Super ❖", "type": "toggle_modifier", "mod": "LEFTMETA", "span": 1.2, "class": "modifier-btn"},
         {"label": "Alt", "type": "toggle_modifier", "mod": "LEFTALT", "span": 1.2, "class": "modifier-btn"},
-        {"label": "Space", "type": "key", "keycode": "SPACE", "span": 4.2, "class": "space-btn"},
+        {"label": "Space", "type": "key", "keycode": "SPACE", "span": 4.5, "class": "space-btn"},
         {"label": "AltGr", "type": "toggle_modifier", "mod": "RIGHTALT", "span": 1.1, "class": "modifier-btn"},
         {"label": "◄", "type": "key", "keycode": "LEFT", "span": 0.9, "class": "nav-btn"},
         {"label": "▲", "type": "key", "keycode": "UP", "span": 0.9, "class": "nav-btn"},
@@ -82,9 +87,9 @@ QWERTY_ROWS = [
 ]
 
 DEV_ROWS = [
-    # Row 0: F-Keys & Esc
+    # Row 0: F-Keys & Esc + Del
     [
-        {"label": "Esc", "type": "key", "keycode": "ESC", "class": "action-btn"},
+        {"label": "Esc", "type": "escape", "class": "action-btn"},
         {"label": "F1", "type": "key", "keycode": "F1"},
         {"label": "F2", "type": "key", "keycode": "F2"},
         {"label": "F3", "type": "key", "keycode": "F3"},
@@ -99,8 +104,9 @@ DEV_ROWS = [
         {"label": "F12", "type": "key", "keycode": "F12"},
         {"label": "Del", "type": "key", "keycode": "DELETE", "class": "action-btn"}
     ],
-    # Row 1: Terminal Symbols
+    # Row 1: All + Terminal Symbols
     [
+        {"label": "All", "type": "action_combo", "combo": (["LEFTCTRL"], "a"), "span": 1.0, "class": "action-btn"},
         {"label": "`", "type": "char"},
         {"label": "~", "type": "char"},
         {"label": "!", "type": "char"},
@@ -116,9 +122,10 @@ DEV_ROWS = [
         {"label": "_", "type": "char"},
         {"label": "+", "type": "char"}
     ],
-    # Row 2: Code Brackets & Operators
+    # Row 2: Copy + Tab + Code Brackets & Operators + Enter
     [
-        {"label": "Tab ↹", "type": "key", "keycode": "TAB", "span": 1.2, "class": "modifier-btn"},
+        {"label": "Copy", "type": "action_combo", "combo": (["LEFTCTRL"], "c"), "span": 1.0, "class": "action-btn"},
+        {"label": "Tab ↹", "type": "key", "keycode": "TAB", "span": 1.1, "class": "modifier-btn"},
         {"label": "|", "type": "char"},
         {"label": "/", "type": "char"},
         {"label": "\\", "type": "char"},
@@ -131,14 +138,15 @@ DEV_ROWS = [
         {"label": "=", "type": "char"},
         {"label": "\"", "type": "char"},
         {"label": "'", "type": "char"},
-        {"label": "Enter ↵", "type": "key", "keycode": "ENTER", "span": 1.5, "class": "primary-btn"}
+        {"label": "Enter ↵", "type": "key", "keycode": "ENTER", "span": 1.4, "class": "primary-btn"}
     ],
-    # Row 3: Navigation & Modifiers
+    # Row 3: Paste + Modifiers & Navigation
     [
-        {"label": "Ctrl", "type": "toggle_modifier", "mod": "LEFTCTRL", "span": 1.1, "class": "modifier-btn"},
-        {"label": "Super ❖", "type": "toggle_modifier", "mod": "LEFTMETA", "span": 1.1, "class": "modifier-btn"},
-        {"label": "Alt", "type": "toggle_modifier", "mod": "LEFTALT", "span": 1.1, "class": "modifier-btn"},
-        {"label": "Shift ⇧", "type": "shift", "span": 1.1, "class": "modifier-btn"},
+        {"label": "Paste", "type": "action_combo", "combo": (["LEFTCTRL"], "v"), "span": 1.0, "class": "action-btn"},
+        {"label": "Ctrl", "type": "toggle_modifier", "mod": "LEFTCTRL", "span": 1.0, "class": "modifier-btn"},
+        {"label": "Super ❖", "type": "toggle_modifier", "mod": "LEFTMETA", "span": 1.0, "class": "modifier-btn"},
+        {"label": "Alt", "type": "toggle_modifier", "mod": "LEFTALT", "span": 1.0, "class": "modifier-btn"},
+        {"label": "Shift ⇧", "type": "shift", "span": 1.0, "class": "modifier-btn"},
         {"label": "Home", "type": "key", "keycode": "HOME"},
         {"label": "End", "type": "key", "keycode": "END"},
         {"label": "PgUp", "type": "key", "keycode": "PAGEUP"},
@@ -153,6 +161,7 @@ DEV_ROWS = [
 
 NUMPAD_ROWS = [
     [
+        {"label": "Esc", "type": "escape", "class": "action-btn"},
         {"label": "7", "type": "char"},
         {"label": "8", "type": "char"},
         {"label": "9", "type": "char"},
@@ -160,6 +169,7 @@ NUMPAD_ROWS = [
         {"label": "⌫", "type": "key", "keycode": "BACKSPACE", "class": "action-btn"}
     ],
     [
+        {"label": "All", "type": "action_combo", "combo": (["LEFTCTRL"], "a"), "class": "action-btn"},
         {"label": "4", "type": "char"},
         {"label": "5", "type": "char"},
         {"label": "6", "type": "char"},
@@ -167,20 +177,21 @@ NUMPAD_ROWS = [
         {"label": "Tab", "type": "key", "keycode": "TAB", "class": "modifier-btn"}
     ],
     [
+        {"label": "Copy", "type": "action_combo", "combo": (["LEFTCTRL"], "c"), "class": "action-btn"},
         {"label": "1", "type": "char"},
         {"label": "2", "type": "char"},
         {"label": "3", "type": "char"},
         {"label": "-", "type": "char"},
-        {"label": "Esc", "type": "key", "keycode": "ESC", "class": "action-btn"}
+        {"label": "Enter ↵", "type": "key", "keycode": "ENTER", "class": "primary-btn"}
     ],
     [
+        {"label": "Paste", "type": "action_combo", "combo": (["LEFTCTRL"], "v"), "class": "action-btn"},
         {"label": "0", "type": "char", "span": 2.0},
         {"label": ".", "type": "char"},
         {"label": "+", "type": "char"},
         {"label": "=", "type": "char"}
     ],
     [
-        {"label": "Space", "type": "key", "keycode": "SPACE", "span": 3.0, "class": "space-btn"},
-        {"label": "Enter ↵", "type": "key", "keycode": "ENTER", "span": 2.0, "class": "primary-btn"}
+        {"label": "Space", "type": "key", "keycode": "SPACE", "span": 6.0, "class": "space-btn"}
     ]
 ]

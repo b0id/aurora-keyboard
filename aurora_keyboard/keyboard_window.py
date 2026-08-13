@@ -5,13 +5,16 @@ glowing gesture trail overlay, FUTO neural swipe-to-type, and orientation view p
 
 import sys
 import os
+import time
 from typing import Tuple
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QComboBox, QLabel, QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QScreen, QCloseEvent
+from PyQt6.QtCore import Qt, QTimer, QSize, QRectF, QPointF
+from PyQt6.QtGui import (
+    QScreen, QCloseEvent, QIcon, QPixmap, QPainter, QColor, QPen, QBrush
+)
 
 from .key_engine import KeyEngine
 from .layouts import QWERTY_ROWS, DEV_ROWS, NUMPAD_ROWS
@@ -28,11 +31,61 @@ from .widgets import (
 )
 
 
+# Modifier tri-state constants
+MOD_STATE_OFF = 0       # Inactive
+MOD_STATE_LATCHED = 1   # Active for next non-modifier keystroke (one-shot)
+MOD_STATE_LOCKED = 2    # Locked on across multiple keystrokes until unlocked
+
+
+def create_padlock_icon(locked: bool, color: QColor, size: int = 24) -> QIcon:
+    """Generates a crisp vector padlock icon for position locking across all platforms."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    pen = QPen(color, 2.0)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+
+    # Padlock Body: Rounded rectangle
+    body_rect = QRectF(4.0, 10.0, 16.0, 11.0)
+    fill_color = QColor(color.red(), color.green(), color.blue(), 60)
+    painter.setBrush(QBrush(fill_color))
+    painter.drawRoundedRect(body_rect, 3.0, 3.0)
+
+    # Shackle: Arch on top
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    if locked:
+        # Closed shackle
+        shackle_rect = QRectF(7.0, 3.0, 10.0, 12.0)
+        painter.drawArc(shackle_rect, 0 * 16, 180 * 16)
+        painter.drawLine(QPointF(7.0, 9.0), QPointF(7.0, 10.5))
+        painter.drawLine(QPointF(17.0, 9.0), QPointF(17.0, 10.5))
+    else:
+        # Open shackle
+        shackle_rect = QRectF(5.0, 1.5, 10.0, 11.0)
+        painter.drawArc(shackle_rect, 30 * 16, 180 * 16)
+        painter.drawLine(QPointF(5.0, 7.0), QPointF(5.0, 10.5))
+
+    # Keyhole dot & slot
+    painter.setPen(QPen(color, 1.6))
+    painter.setBrush(QBrush(color))
+    painter.drawEllipse(QPointF(12.0, 14.5), 1.3, 1.3)
+    painter.drawLine(QPointF(12.0, 15.5), QPointF(12.0, 18.0))
+
+    painter.end()
+    return QIcon(pixmap)
+
+
 class AuroraKeyboardWindow(QWidget):
     """Main Frameless On-Screen Keyboard Window."""
 
     # Toolbar density threshold: below this width, hide non-essential action buttons
     TOOLBAR_DENSITY_THRESHOLD = 580
+    DOUBLE_TAP_INTERVAL = 0.40  # 400ms double-tap lock window
 
     _SCALE_PRESETS = (
         ("25% (Mini)", 0.25),
@@ -54,9 +107,10 @@ class AuroraKeyboardWindow(QWidget):
         self.swipe_manager = SwipeManager()
         self.rolling_context = RollingTokenContext()
 
-        self.shift_active = False
+        # Tri-state modifier state map: mod_name -> int (OFF, LATCHED, LOCKED)
+        self.modifier_states = {}
+        self._last_mod_tap_time = {}
         self.caps_active = False
-        self.active_modifiers = set()
 
         self.current_layout_name = self.geometry_mgr.current_layout or "QWERTY"
         self.current_theme = self.geometry_mgr.current_theme or "Aurora Glass"
@@ -108,6 +162,25 @@ class AuroraKeyboardWindow(QWidget):
 
     # --- Property bridges for backward compatibility ---
     @property
+    def shift_active(self) -> bool:
+        return self.modifier_states.get("LEFTSHIFT", MOD_STATE_OFF) != MOD_STATE_OFF
+
+    @shift_active.setter
+    def shift_active(self, val: bool):
+        self.modifier_states["LEFTSHIFT"] = MOD_STATE_LATCHED if val else MOD_STATE_OFF
+        self.update_key_labels()
+        self.update_modifier_buttons_visual()
+
+    @property
+    def active_modifiers(self) -> set:
+        return {mod for mod, state in self.modifier_states.items() if state != MOD_STATE_OFF}
+
+    @active_modifiers.setter
+    def active_modifiers(self, val):
+        self.modifier_states = {m: MOD_STATE_LATCHED for m in val}
+        self.update_modifier_buttons_visual()
+
+    @property
     def position_mode(self) -> str:
         return self.geometry_mgr.position_mode
 
@@ -133,87 +206,59 @@ class AuroraKeyboardWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
+    def _update_drag_lock_icon(self, locked: bool):
+        color = QColor("#f87171") if locked else QColor("#38bdf8")
+        self.drag_lock_btn.setIcon(create_padlock_icon(locked, color, 24))
+        self.drag_lock_btn.setText("")
+        self.drag_lock_btn.setToolTip("Lock keyboard position (Position is Locked - click to unlock)" if locked else "Lock keyboard position (Position is Unlocked - click to lock)")
+
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(8, 4, 8, 8)
         self.main_layout.setSpacing(3)
 
-        # 1. Top Drag & Action Bar
+        # 1. Top Drag, Lock, Resize & Window Management Bar
         self.action_bar = QFrame(self)
         self.action_bar.setObjectName("action_bar")
         bar_layout = QHBoxLayout(self.action_bar)
         bar_layout.setContentsMargins(6, 2, 6, 2)
-        bar_layout.setSpacing(4)
+        bar_layout.setSpacing(6)
 
         # Drag Handle Grip
         self.drag_label = DragHandleLabel("❖ Drag", self)
         bar_layout.addWidget(self.drag_label)
 
-        # Drag Lock Toggle - prevents accidental repositioning from a
-        # stray touch on the window background (padding/gaps between keys
-        # trigger a full window drag today unless this is locked).
-        self.drag_lock_btn = QPushButton("🔓")
+        # Drag Lock Toggle with vector icon
+        self.drag_lock_btn = QPushButton()
         self.drag_lock_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.drag_lock_btn.setFixedSize(28, 28)
+        self.drag_lock_btn.setFixedSize(30, 28)
         self.drag_lock_btn.setCheckable(True)
-        self.drag_lock_btn.setToolTip("Lock keyboard position (prevents accidental dragging)")
+        self.drag_lock_btn.setIconSize(QSize(18, 18))
         self.drag_lock_btn.setStyleSheet("""
             QPushButton {
-                background: rgba(56, 189, 248, 0.2);
+                background: rgba(56, 189, 248, 0.18);
                 border: 1px solid rgba(56, 189, 248, 0.5);
-                color: #38bdf8;
-                font-size: 12px;
                 border-radius: 6px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(56, 189, 248, 0.35);
             }
             QPushButton:checked {
                 background: rgba(248, 113, 113, 0.25);
                 border: 1px solid rgba(248, 113, 113, 0.6);
-                color: #f87171;
+            }
+            QPushButton:checked:hover {
+                background: rgba(248, 113, 113, 0.4);
             }
         """)
         self.drag_lock_btn.toggled.connect(self.set_drag_locked)
+        self._update_drag_lock_icon(False)
         bar_layout.addWidget(self.drag_lock_btn)
 
-        # Quick Actions
-        actions = [
-            ("All", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "a")),
-            ("Copy", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "c")),
-            ("Paste", lambda: self.engine.send_combo(self.get_active_modifiers() or ["LEFTCTRL"], "v")),
-            ("Esc", lambda: self.engine.send_keycode(self.engine.get_keycode("ESC"))),
-            ("Tab", lambda: self.engine.send_keycode(self.engine.get_keycode("TAB"))),
-        ]
-        for name, callback in actions:
-            btn = QPushButton(name)
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setFixedHeight(28)
-            btn.setStyleSheet("padding: 0 4px; font-size: 11px;")
-            btn.clicked.connect(callback)
-            bar_layout.addWidget(btn)
-
-        bar_layout.addStretch()
-
-        # Calibration / Lock Placement Button
-        self.lock_preset_btn = QPushButton("📌 Set Default")
-        self.lock_preset_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.lock_preset_btn.setFixedHeight(28)
-        self.lock_preset_btn.setToolTip("Lock current placement as default preset for this orientation")
-        self.lock_preset_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(56, 189, 248, 0.2);
-                border: 1px solid rgba(56, 189, 248, 0.5);
-                color: #38bdf8;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 0 6px;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background: rgba(56, 189, 248, 0.4);
-                color: #ffffff;
-            }
-        """)
-        self.lock_preset_btn.clicked.connect(self.sample_current_placement)
-        bar_layout.addWidget(self.lock_preset_btn)
+        # Touch Corner Resize Grip
+        self.resize_grip = TouchResizeGrip(self)
+        bar_layout.addWidget(self.resize_grip)
 
         # Touch Zoom Out Button
         zoom_out_btn = QPushButton("−")
@@ -241,9 +286,30 @@ class AuroraKeyboardWindow(QWidget):
         zoom_in_btn.clicked.connect(lambda: self.scale_keyboard(1.10))
         bar_layout.addWidget(zoom_in_btn)
 
-        # Touch Corner Resize Grip
-        self.resize_grip = TouchResizeGrip(self)
-        bar_layout.addWidget(self.resize_grip)
+        # Calibration / Lock Placement Button
+        self.lock_preset_btn = QPushButton("📌 Set Default")
+        self.lock_preset_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.lock_preset_btn.setFixedHeight(28)
+        self.lock_preset_btn.setToolTip("Lock current placement as default preset for this orientation")
+        self.lock_preset_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(56, 189, 248, 0.2);
+                border: 1px solid rgba(56, 189, 248, 0.5);
+                color: #38bdf8;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 0 6px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background: rgba(56, 189, 248, 0.4);
+                color: #ffffff;
+            }
+        """)
+        self.lock_preset_btn.clicked.connect(self.sample_current_placement)
+        bar_layout.addWidget(self.lock_preset_btn)
+
+        bar_layout.addStretch()
 
         # Size / Position Mode Selector
         self.size_mode_box = QComboBox()
@@ -610,11 +676,22 @@ class AuroraKeyboardWindow(QWidget):
                 if key_info.get("type") in ["shift", "caps", "toggle_modifier"]:
                     btn.setCheckable(True)
                     if key_info.get("type") == "shift":
-                        btn.setChecked(self.shift_active)
+                        state = self.modifier_states.get("LEFTSHIFT", MOD_STATE_OFF)
+                        btn.setChecked(state != MOD_STATE_OFF)
+                        btn.setProperty("locked", "true" if state == MOD_STATE_LOCKED else "false")
                     elif key_info.get("type") == "caps":
                         btn.setChecked(self.caps_active)
+                        btn.setProperty("locked", "true" if self.caps_active else "false")
                     elif key_info.get("type") == "toggle_modifier":
-                        btn.setChecked(key_info.get("mod") in self.active_modifiers)
+                        mod = key_info.get("mod")
+                        state = self.modifier_states.get(mod, MOD_STATE_OFF)
+                        btn.setChecked(state != MOD_STATE_OFF)
+                        btn.setProperty("locked", "true" if state == MOD_STATE_LOCKED else "false")
+                elif key_info.get("type") in ["char", "key"]:
+                    # Enable auto-repeat on hold for characters, backspace, delete, arrows, and space
+                    btn.setAutoRepeat(True)
+                    btn.setAutoRepeatDelay(380)
+                    btn.setAutoRepeatInterval(50)
 
                 row_layout.addWidget(btn, int(span * 10))
                 self.key_buttons.append(btn)
@@ -622,10 +699,100 @@ class AuroraKeyboardWindow(QWidget):
             self.keys_layout.addWidget(row_widget)
 
     def get_active_modifiers(self) -> list:
-        mods = list(self.active_modifiers)
-        if self.shift_active and "LEFTSHIFT" not in mods:
-            mods.append("LEFTSHIFT")
-        return mods
+        return [mod for mod, state in self.modifier_states.items() if state != MOD_STATE_OFF]
+
+    def toggle_modifier(self, mod: str):
+        """Tri-state modifier state transitions:
+        - OFF -> LATCHED (Active for next key)
+        - LATCHED within interval -> LOCKED (Double-tap lock)
+        - LATCHED after interval -> OFF (Single tap toggle off)
+        - LOCKED -> OFF (Single tap unlocks / escapes lock)
+        """
+        now = time.time()
+        last_tap = self._last_mod_tap_time.get(mod, 0.0)
+        current_state = self.modifier_states.get(mod, MOD_STATE_OFF)
+
+        if current_state == MOD_STATE_OFF:
+            self.modifier_states[mod] = MOD_STATE_LATCHED
+        elif current_state == MOD_STATE_LATCHED:
+            if (now - last_tap) <= self.DOUBLE_TAP_INTERVAL:
+                self.modifier_states[mod] = MOD_STATE_LOCKED
+            else:
+                self.modifier_states[mod] = MOD_STATE_OFF
+        elif current_state == MOD_STATE_LOCKED:
+            self.modifier_states[mod] = MOD_STATE_OFF
+
+        self._last_mod_tap_time[mod] = now
+        self.update_key_labels()
+        self.update_modifier_buttons_visual()
+
+    def consume_latched_modifiers(self):
+        """Releases any one-shot (latched) modifiers while preserving locked modifiers."""
+        changed = False
+        for mod, state in list(self.modifier_states.items()):
+            if state == MOD_STATE_LATCHED:
+                self.modifier_states[mod] = MOD_STATE_OFF
+                changed = True
+        if changed:
+            self.update_key_labels()
+            self.update_modifier_buttons_visual()
+
+    def clear_all_modifiers(self):
+        """Resets all modifiers (latched and locked), caps lock, and active keys to clean default state."""
+        self.modifier_states.clear()
+        self.caps_active = False
+        self.update_key_labels()
+        self.update_modifier_buttons_visual()
+
+    def clear_modifiers(self):
+        """Backward compatible alias for clear_all_modifiers."""
+        self.clear_all_modifiers()
+
+    def update_modifier_buttons_visual(self):
+        """Updates checked state, lock labels, and styling across all modifier buttons."""
+        for btn in getattr(self, 'key_buttons', []):
+            info = getattr(btn, 'key_info', None)
+            if not info:
+                continue
+            ktype = info.get("type")
+            mod_name = None
+            if ktype == "shift":
+                mod_name = "LEFTSHIFT"
+            elif ktype == "toggle_modifier":
+                mod_name = info.get("mod")
+            elif ktype == "caps":
+                btn.setChecked(self.caps_active)
+                btn.setProperty("locked", "true" if self.caps_active else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+                continue
+
+            if mod_name:
+                state = self.modifier_states.get(mod_name, MOD_STATE_OFF)
+                btn.setChecked(state != MOD_STATE_OFF)
+                is_locked = (state == MOD_STATE_LOCKED)
+                btn.setProperty("locked", "true" if is_locked else "false")
+
+                base_label = info.get("label", "")
+                if is_locked:
+                    if "Shift" in base_label:
+                        btn.setText("Shift 🔒")
+                    elif "Ctrl" in base_label:
+                        btn.setText("Ctrl 🔒")
+                    elif "AltGr" in base_label:
+                        btn.setText("AltGr 🔒")
+                    elif "Alt" in base_label:
+                        btn.setText("Alt 🔒")
+                    elif "Super" in base_label:
+                        btn.setText("Super 🔒")
+                    else:
+                        btn.setText(f"{base_label} 🔒")
+                else:
+                    display_label = base_label.replace("&", "&&") if ("&" in base_label and "&&" not in base_label) else base_label
+                    btn.setText(display_label)
+
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
 
     def _build_key_positions(self):
         positions = {}
@@ -713,53 +880,57 @@ class AuroraKeyboardWindow(QWidget):
 
             if has_non_shift_mods:
                 self.engine.send_combo(active_mods, base_char)
-                self.clear_modifiers()
             else:
                 self.engine.type_text(char_to_send)
-                if self.shift_active and not self.caps_active:
-                    self.clear_modifiers()
+
+            self.consume_latched_modifiers()
             self.rolling_context.handle_key(char_to_send)
 
         elif ktype == "key":
             keycode_str = key_info.get("keycode")
-            if active_mods:
-                self.engine.send_combo(active_mods, keycode_str)
-                if self.shift_active and not self.caps_active and "LEFTSHIFT" not in self.active_modifiers:
-                    self.shift_active = False
-                    self.update_key_labels()
-                    for btn in self.key_buttons:
-                        info = getattr(btn, 'key_info', None)
-                        if info and info.get("type") == "shift":
-                            btn.setChecked(False)
-            else:
-                code = self.engine.get_keycode(keycode_str)
+            if keycode_str == "ESC":
+                code = self.engine.get_keycode("ESC")
                 self.engine.send_keycode(code)
+                self.clear_all_modifiers()
+            else:
+                if active_mods:
+                    self.engine.send_combo(active_mods, keycode_str)
+                else:
+                    code = self.engine.get_keycode(keycode_str)
+                    self.engine.send_keycode(code)
+                self.consume_latched_modifiers()
             self.rolling_context.handle_key(keycode_str)
 
+        elif ktype == "escape":
+            code = self.engine.get_keycode("ESC")
+            self.engine.send_keycode(code)
+            self.clear_all_modifiers()
+
+        elif ktype == "action_combo":
+            default_mods, target = key_info.get("combo", (["LEFTCTRL"], "c"))
+            mods = active_mods or default_mods
+            self.engine.send_combo(mods, target)
+            self.consume_latched_modifiers()
+
         elif ktype == "shift":
-            self.shift_active = not self.shift_active
-            btn.setChecked(self.shift_active)
-            self.update_key_labels()
+            self.toggle_modifier("LEFTSHIFT")
 
         elif ktype == "caps":
             self.caps_active = not self.caps_active
-            btn.setChecked(self.caps_active)
             self.update_key_labels()
+            self.update_modifier_buttons_visual()
 
         elif ktype == "toggle_modifier":
             mod = key_info.get("mod")
-            if mod in self.active_modifiers:
-                self.active_modifiers.remove(mod)
-                btn.setChecked(False)
-                if mod == "LEFTMETA":
-                    code = self.engine.get_keycode("LEFTMETA")
+            self.toggle_modifier(mod)
+            if mod == "LEFTMETA":
+                # Pulse KEY_LEFTMETA to kernel uinput so Linux desktop environment (KDE / GNOME) opens Start/App launcher
+                code = self.engine.get_keycode("LEFTMETA")
+                if code:
                     self.engine.send_keycode(code)
-            else:
-                self.active_modifiers.add(mod)
-                btn.setChecked(True)
 
     def update_key_labels(self):
-        for btn in self.key_buttons:
+        for btn in getattr(self, 'key_buttons', []):
             info = getattr(btn, 'key_info', None)
             if info and info.get("type") == "char":
                 base_label = info.get("label", "")
@@ -769,15 +940,6 @@ class AuroraKeyboardWindow(QWidget):
                     raw_label = base_label
                 display_label = raw_label.replace("&", "&&") if ("&" in raw_label and "&&" not in raw_label) else raw_label
                 btn.setText(display_label)
-
-    def clear_modifiers(self):
-        self.active_modifiers.clear()
-        self.shift_active = False
-        self.update_key_labels()
-        for btn in self.key_buttons:
-            info = getattr(btn, 'key_info', None)
-            if info and info.get("type") in ["toggle_modifier", "shift"]:
-                btn.setChecked(False)
 
     def change_layout(self, layout_name: str):
         self.current_layout_name = layout_name
@@ -810,16 +972,16 @@ class AuroraKeyboardWindow(QWidget):
         self.show_keyboard()
 
     def set_drag_locked(self, locked: bool):
-        """Toggle whether the keyboard can be repositioned at all. A
-        background click/tap (padding, gaps between keys) triggers a full
-        window drag via mousePressEvent below unless locked - the actual
-        cause of accidental repositioning on a touchscreen, not just a
-        theoretical risk. Locking also disables the dedicated ❖ Drag
-        handle, so it's a genuine "nothing moves" guarantee, not just a
-        narrower catch-all."""
+        """Toggle whether the keyboard can be repositioned at all."""
         self._drag_locked = locked
-        self.drag_lock_btn.setText("🔒" if locked else "🔓")
-        self.drag_label.setEnabled(not locked)
+        if hasattr(self, 'drag_lock_btn'):
+            if self.drag_lock_btn.isChecked() != locked:
+                self.drag_lock_btn.blockSignals(True)
+                self.drag_lock_btn.setChecked(locked)
+                self.drag_lock_btn.blockSignals(False)
+            self._update_drag_lock_icon(locked)
+        if hasattr(self, 'drag_label'):
+            self.drag_label.setEnabled(not locked)
 
     def mousePressEvent(self, event):
         if self._drag_locked:
