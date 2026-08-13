@@ -219,6 +219,28 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
         self.assertFalse(self.window.badge.isVisible())
         self.assertTrue(self.window.isVisible())
 
+    def test_rotation_preserves_distinct_presets_without_corruption(self):
+        # Set distinct Landscape and Portrait presets
+        self.window.geometry_mgr.sample_and_set_profile("landscape", 400, 500, 800, 450, "bottom")
+        self.window.geometry_mgr.sample_and_set_profile("portrait", 50, 1100, 960, 400, "bottom")
+        self.window.geometry_mgr.position_mode = "remember"
+
+        # Simulate resize events (which happen during screen transition)
+        from PyQt6.QtGui import QResizeEvent
+        from PyQt6.QtCore import QSize
+        resize_ev = QResizeEvent(QSize(1067, 1600), QSize(1600, 1067))
+        self.window.resizeEvent(resize_ev)
+
+        # Verify Landscape preset was NOT corrupted by the resize
+        land_prof = self.window.geometry_mgr.profiles["landscape"]
+        self.assertEqual(land_prof.pos, (400, 500))
+        self.assertEqual(land_prof.size, (800, 450))
+
+        # Verify Portrait preset was NOT corrupted
+        port_prof = self.window.geometry_mgr.profiles["portrait"]
+        self.assertEqual(port_prof.pos, (50, 1100))
+        self.assertEqual(port_prof.size, (960, 400))
+
 
 if __name__ == "__main__":
     unittest.main()

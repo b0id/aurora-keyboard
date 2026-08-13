@@ -102,4 +102,6 @@ class TouchResizeGrip(QLabel):
     def mouseReleaseEvent(self, event):
         self._start_pos = None
         self._start_size = None
+        if self.parent_window.isVisible():
+            self.parent_window.on_user_drag_finished()
         event.accept()

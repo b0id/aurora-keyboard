@@ -393,8 +393,10 @@ class AuroraKeyboardWindow(QWidget):
         """Queries live Wayland screen coordinates from KWin, falling back to Qt pos/size."""
         kwin_geom = self.geometry_mgr.get_window_geometry_kwin("Aurora Touch Keyboard Main")
         if kwin_geom:
-            kx, ky, _, _ = kwin_geom
-            return (kx, ky, self.width(), self.height())
+            kx, ky, kw, kh = kwin_geom
+            w = kw if kw > 0 else self.width()
+            h = kh if kh > 0 else self.height()
+            return (kx, ky, w, h)
         p = self.pos()
         return (p.x(), p.y(), self.width(), self.height())
 
@@ -487,20 +489,8 @@ class AuroraKeyboardWindow(QWidget):
         self._update_toolbar_density()
         self._sync_scale_preset_label()
 
-        if self.isVisible() and not getattr(self, '_programmatic_geometry', False):
-            if self.geometry_mgr.position_mode == "remember":
-                screen = QApplication.primaryScreen()
-                geom = screen.availableGeometry() if screen else None
-                orient = self.geometry_mgr.get_orientation_key(geom)
-                x, y, w, h = self._sample_live_geometry()
-                self.geometry_mgr.sample_and_set_profile(orient, x, y, w, h, self.dock_position)
-                self._save_timer.start(500)
-
     def moveEvent(self, event):
         super().moveEvent(event)
-        if self.isVisible() and not getattr(self, '_programmatic_geometry', False):
-            if self.geometry_mgr.position_mode == "remember":
-                self._save_timer.start(500)
 
     def closeEvent(self, event: QCloseEvent):
         """Ensures active window geometry is saved and synced upon closing."""
