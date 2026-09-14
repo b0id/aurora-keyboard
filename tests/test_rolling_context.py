@@ -6,6 +6,14 @@ verified standalone before wiring into keyboard_window.py, per sec9. Run:
     python3 -m unittest tests.test_rolling_context
 """
 
+import os
+
+# Safety interlock: never open the real /dev/uinput device from a test.
+# These tests drive handle_key_click(), and without this the keystrokes land
+# in whatever window the user currently has focused on the live desktop.
+os.environ["AURORA_NO_UINPUT"] = "1"
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import time
 import unittest
 

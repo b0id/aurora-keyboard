@@ -6,6 +6,14 @@ Verifies:
 3. CandidateBar and SwipeTrailOverlay lifecycle.
 """
 
+import os
+
+# Safety interlock: never open the real /dev/uinput device from a test.
+# These tests drive handle_key_click(), and without this the keystrokes land
+# in whatever window the user currently has focused on the live desktop.
+os.environ["AURORA_NO_UINPUT"] = "1"
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import sys
 import unittest
 from PyQt6.QtWidgets import QApplication

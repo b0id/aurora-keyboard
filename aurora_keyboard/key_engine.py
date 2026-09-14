@@ -2,6 +2,7 @@
 Direct Kernel UInput Key Engine for Aurora Touch Keyboard using evdev.
 """
 
+import os
 import time
 import sys
 import evdev
@@ -56,6 +57,14 @@ class KeyEngine:
         self._init_uinput()
 
     def _init_uinput(self):
+        # Safety interlock. With AURORA_NO_UINPUT set, no virtual input device
+        # is opened at all, so every emit below no-ops on `self.ui is None`.
+        # Tests and any headless/agent-driven run MUST set this: the device is
+        # system-wide, and a keystroke emitted from a test lands in whatever
+        # window the user actually has focused.
+        if os.environ.get("AURORA_NO_UINPUT"):
+            print("[KeyEngine] AURORA_NO_UINPUT set - running without a virtual input device.", file=sys.stderr)
+            return
         try:
             # Enable key events (exclude sentinel codes like KEY_CNT that exceed KEY_MAX)
             events = {e.EV_KEY: [code for code in e.KEY.keys() if code <= e.KEY_MAX]}
