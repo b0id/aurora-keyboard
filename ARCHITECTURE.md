@@ -86,6 +86,7 @@ Auto-repeat on hold is limited to `AUTO_REPEAT_KEYCODES` (backspace, delete, spa
 
 ## 6. Deployment & Autostart
 
-- `install.sh`: Creates desktop launcher and autostart entry with `--badge-only` to launch minimized.
+- `install.sh`: Creates desktop launcher and autostart entry with `--badge-only` to launch minimized, plus a systemd `--user` unit supervising the FUTO daemon.
+- **Single daemon ownership**: `futo_daemon.py` probes `/tmp/futo_swipe.sock` before binding and exits if a live daemon already answers (a stale file from a crashed daemon is still cleaned up and re-bound). `main.py`'s `_ensure_futo_daemon()` defers to `systemctl --user start` when the unit is installed, falling back to the launcher script only on non-systemd installs. Both are needed: the unit takes ~20s to load its models at login, so `is_available()` said no and the app spawned a second daemon that then *took the socket over* — leaving the systemd-supervised one stranded on an unlinked inode and the unsupervised one serving swipes, i.e. no auto-restart, the exact failure the systemd unit was added to prevent.
 - `main.py`: Single-instance guard using `QLocalServer` prevents duplicate processes.
 - **Preference restore**: theme and layout live in `~/.config/aurora-keyboard/config.json` and are applied in `AuroraKeyboardWindow.__init__`. `--theme`/`--layout` default to `None` so that an unspecified flag leaves the saved preference alone; a non-`None` argparse default is always truthy and silently overrode it on every launch. Changing either from the toolbar schedules a debounced write (`_persist_prefs`), so the choice survives a crash rather than only a clean exit.

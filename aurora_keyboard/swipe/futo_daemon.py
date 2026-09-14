@@ -273,7 +273,29 @@ def handle_client(conn):
         conn.close()
 
 
+def _daemon_already_listening() -> bool:
+    """True if a healthy daemon already answers on SOCKET_PATH."""
+    if not os.path.exists(SOCKET_PATH):
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.5)
+            probe.connect(SOCKET_PATH)
+            return True
+    except OSError:
+        return False  # stale socket file from a crashed daemon
+
+
 def run_server():
+    # Never steal the socket from a live daemon. This block used to unlink
+    # unconditionally, so a second daemon (systemd unit + the app's own
+    # _ensure_futo_daemon racing at login) would take the path over and strand
+    # the first one listening on an unlinked inode - two ~750MB processes,
+    # with the *unsupervised* one serving traffic.
+    if _daemon_already_listening():
+        print(f"[FUTO Daemon] Another daemon already owns {SOCKET_PATH} - exiting.", flush=True)
+        return
+
     if os.path.exists(SOCKET_PATH):
         try:
             os.unlink(SOCKET_PATH)

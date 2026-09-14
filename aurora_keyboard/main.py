@@ -14,22 +14,57 @@ from .swipe.futo_client import FutoSwipeClient
 IPC_SERVER_NAME = "aurora-touch-keyboard-singleton"
 
 
+DAEMON_UNIT = "aurora-futo-daemon.service"
+
+
+def _systemd_unit_installed() -> bool:
+    try:
+        return subprocess.run(
+            ["systemctl", "--user", "cat", DAEMON_UNIT],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5
+        ).returncode == 0
+    except Exception:
+        return False
+
+
 def _ensure_futo_daemon():
-    """Ensure FUTO neural daemon is running in background if socket is not reachable."""
+    """Ensure the FUTO neural daemon is running if the socket is not reachable.
+
+    Where the Milestone 4a systemd --user unit is installed, defer to it:
+    `systemctl start` is idempotent, so a daemon that is merely still loading
+    its models is left alone. Spawning the launcher directly instead used to
+    lose a login race - the unit takes ~20s to load PyTorch, is_available()
+    said no, and this spawned a *second* daemon that then took the socket
+    over, leaving the supervised one stranded and the unsupervised one
+    serving swipes (i.e. no auto-restart, the exact failure 4a fixed).
+    """
     client = FutoSwipeClient()
-    if not client.is_available():
-        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        launcher = os.path.join(root_dir, "aurora-futo-daemon")
-        if os.path.exists(launcher):
-            try:
-                subprocess.Popen(
-                    ["bash", launcher],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True
-                )
-            except Exception as e:
-                print(f"[Main] Notice: Could not auto-launch neural daemon: {e}", file=sys.stderr)
+    if client.is_available():
+        return
+
+    if _systemd_unit_installed():
+        try:
+            subprocess.run(
+                ["systemctl", "--user", "start", DAEMON_UNIT],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10
+            )
+            return
+        except Exception as e:
+            print(f"[Main] Notice: systemd start failed, falling back: {e}", file=sys.stderr)
+
+    # No systemd unit (portable/non-systemd install) - launch directly.
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    launcher = os.path.join(root_dir, "aurora-futo-daemon")
+    if os.path.exists(launcher):
+        try:
+            subprocess.Popen(
+                ["bash", launcher],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"[Main] Notice: Could not auto-launch neural daemon: {e}", file=sys.stderr)
 
 
 def _notify_running_instance() -> bool:
