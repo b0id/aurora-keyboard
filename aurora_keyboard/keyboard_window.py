@@ -31,6 +31,17 @@ from .widgets import (
 )
 
 
+# Keys safe to fire repeatedly while held. Deliberately excludes ENTER (a
+# held Enter re-submits), the F-keys and INSERT. Auto-repeat was introduced
+# as "character and navigation/editing keys" but was applied to every
+# non-modifier key, so resting a finger on Enter fired it over and over.
+AUTO_REPEAT_KEYCODES = {
+    "BACKSPACE", "DELETE", "SPACE", "TAB",
+    "LEFT", "RIGHT", "UP", "DOWN",
+    "HOME", "END", "PAGEUP", "PAGEDOWN",
+}
+
+
 # Modifier tri-state constants
 MOD_STATE_OFF = 0       # Inactive
 MOD_STATE_LATCHED = 1   # Active for next non-modifier keystroke (one-shot)
@@ -86,6 +97,9 @@ class AuroraKeyboardWindow(QWidget):
     # Toolbar density threshold: below this width, hide non-essential action buttons
     TOOLBAR_DENSITY_THRESHOLD = 580
     DOUBLE_TAP_INTERVAL = 0.40  # 400ms double-tap lock window
+    # How long a tapped Super waits for a companion key before it is treated
+    # as a bare Super press (open the desktop launcher). See _schedule_meta_pulse.
+    META_PULSE_DELAY_MS = 600
 
     _SCALE_PRESETS = (
         ("25% (Mini)", 0.25),
@@ -121,6 +135,9 @@ class AuroraKeyboardWindow(QWidget):
         self.badge = FloatingBadge(self)
         self._drag_pos = None
         self._drag_locked = False
+        # Guards preference writes during construction: apply_theme() and
+        # change_layout() both run before the window is fully built.
+        self._ready = False
 
         # Swipe gesture state
         self._swipe_points = []
@@ -131,6 +148,11 @@ class AuroraKeyboardWindow(QWidget):
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.timeout.connect(self.save_config_and_sync)
+
+        # Deferred bare-Super pulse (launcher) - see _schedule_meta_pulse
+        self._meta_pulse_timer = QTimer(self)
+        self._meta_pulse_timer.setSingleShot(True)
+        self._meta_pulse_timer.timeout.connect(self._fire_meta_pulse)
 
         self.apply_flags()
         self.init_ui()
@@ -159,6 +181,8 @@ class AuroraKeyboardWindow(QWidget):
 
         # Initial KWin rule synchronization
         self.geometry_mgr.sync_kwin_rules(self.geometry(), self._natural_height)
+
+        self._ready = True
 
     # --- Property bridges for backward compatibility ---
     @property
@@ -677,8 +701,9 @@ class AuroraKeyboardWindow(QWidget):
                         state = self.modifier_states.get(mod, MOD_STATE_OFF)
                         btn.setChecked(state != MOD_STATE_OFF)
                         btn.setProperty("locked", "true" if state == MOD_STATE_LOCKED else "false")
-                elif key_info.get("type") in ["char", "key"]:
-                    # Enable auto-repeat on hold for characters, backspace, delete, arrows, and space
+                elif key_info.get("type") == "char" or key_info.get("keycode") in AUTO_REPEAT_KEYCODES:
+                    # Auto-repeat on hold for characters, backspace, delete,
+                    # arrows, space and paging only - never Enter.
                     btn.setAutoRepeat(True)
                     btn.setAutoRepeatDelay(380)
                     btn.setAutoRepeatInterval(50)
@@ -716,6 +741,42 @@ class AuroraKeyboardWindow(QWidget):
         self.update_key_labels()
         self.update_modifier_buttons_visual()
 
+    def _cancel_meta_pulse(self):
+        if hasattr(self, '_meta_pulse_timer'):
+            self._meta_pulse_timer.stop()
+
+    def _schedule_meta_pulse(self):
+        """Arms the bare-Super press that opens the desktop launcher.
+
+        Super previously pulsed KEY_LEFTMETA *and* latched LEFTMETA on the
+        same tap, so the launcher opened and the next keystroke silently
+        became Super+<key> - the most common way Enter stopped working.
+        Now a tap only latches (so Super+D works from a single tap, no
+        double-tap lock needed); if no key follows within
+        META_PULSE_DELAY_MS the tap is retroactively treated as a plain
+        Super press instead."""
+        self._cancel_meta_pulse()
+        if self.modifier_states.get("LEFTMETA", MOD_STATE_OFF) == MOD_STATE_LATCHED:
+            self._meta_pulse_timer.start(self.META_PULSE_DELAY_MS)
+
+    def _fire_meta_pulse(self):
+        if self.modifier_states.get("LEFTMETA", MOD_STATE_OFF) != MOD_STATE_LATCHED:
+            return
+        self.modifier_states["LEFTMETA"] = MOD_STATE_OFF
+        code = self.engine.get_keycode("LEFTMETA")
+        if code:
+            self.engine.send_keycode(code)
+        self.update_modifier_buttons_visual()
+
+    def commit_text(self, text: str):
+        """Types committed text (swipe word, candidate chip) and retires any
+        one-shot modifiers. Swipe commits used to bypass this entirely, so a
+        latched Shift/Ctrl/Super survived a whole swiped sentence and leaked
+        into the next tapped key."""
+        self._cancel_meta_pulse()
+        self.engine.type_text(text)
+        self.consume_latched_modifiers()
+
     def consume_latched_modifiers(self):
         """Releases any one-shot (latched) modifiers while preserving locked modifiers."""
         changed = False
@@ -729,6 +790,7 @@ class AuroraKeyboardWindow(QWidget):
 
     def clear_all_modifiers(self):
         """Resets all modifiers (latched and locked), caps lock, and active keys to clean default state."""
+        self._cancel_meta_pulse()
         self.modifier_states.clear()
         self.caps_active = False
         self.update_key_labels()
@@ -861,6 +923,10 @@ class AuroraKeyboardWindow(QWidget):
         ktype = key_info.get("type")
         active_mods = self.get_active_modifiers()
 
+        # Any real keystroke (or another modifier tap, which means a combo is
+        # being built) cancels a pending bare-Super launcher press.
+        self._cancel_meta_pulse()
+
         if ktype == "char":
             base_char = key_info.get("label", "")
             shift_char = key_info.get("shift_label", base_char.upper() if len(base_char) == 1 else base_char)
@@ -914,10 +980,7 @@ class AuroraKeyboardWindow(QWidget):
             mod = key_info.get("mod")
             self.toggle_modifier(mod)
             if mod == "LEFTMETA":
-                # Pulse KEY_LEFTMETA to kernel uinput so Linux desktop environment (KDE / GNOME) opens Start/App launcher
-                code = self.engine.get_keycode("LEFTMETA")
-                if code:
-                    self.engine.send_keycode(code)
+                self._schedule_meta_pulse()
 
     def update_key_labels(self):
         for btn in getattr(self, 'key_buttons', []):
@@ -931,10 +994,38 @@ class AuroraKeyboardWindow(QWidget):
                 display_label = raw_label.replace("&", "&&") if ("&" in raw_label and "&&" not in raw_label) else raw_label
                 btn.setText(display_label)
 
+    def _persist_prefs(self):
+        """Debounced write of theme/layout to config.json.
+
+        Without this the chosen theme only survived if some *other* action
+        (a drag, a zoom, a clean close) happened to save afterwards - a
+        crash or a kill lost it."""
+        if not getattr(self, '_ready', False):
+            return
+        self._save_timer.start(500)
+
+    def _sync_layout_box(self, layout_name: str):
+        """Keeps the toolbar combo in step when the layout is changed
+        programmatically (CLI --layout, or a restored preference)."""
+        if not hasattr(self, 'layout_box'):
+            return
+        if layout_name in ("DEV/TERM", "DEV"):
+            label = "DEV"
+        elif layout_name in ("NUMPAD", "NUM"):
+            label = "NUM"
+        else:
+            label = "QWERTY"
+        if self.layout_box.currentText() != label:
+            self.layout_box.blockSignals(True)
+            self.layout_box.setCurrentText(label)
+            self.layout_box.blockSignals(False)
+
     def change_layout(self, layout_name: str):
         self.current_layout_name = layout_name
+        self._sync_layout_box(layout_name)
         self.build_keys(layout_name)
         self.apply_theme(self.current_theme)
+        self._persist_prefs()
 
     def apply_theme(self, theme_name: str):
         self.current_theme = theme_name
@@ -945,6 +1036,11 @@ class AuroraKeyboardWindow(QWidget):
             self.trail_overlay.set_theme(theme_name)
         if hasattr(self, 'key_buttons'):
             self._natural_height = max(MIN_HEIGHT_FLOOR, self.sizeHint().height())
+        if hasattr(self, 'theme_box') and self.theme_box.currentText() != theme_name:
+            self.theme_box.blockSignals(True)
+            self.theme_box.setCurrentText(theme_name)
+            self.theme_box.blockSignals(False)
+        self._persist_prefs()
 
     def hide_to_badge(self):
         self.hide()

@@ -47,13 +47,21 @@ def _notify_running_instance() -> bool:
     return False
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aurora Touch Keyboard for Plasma 6 Wayland Tablets")
-    parser.add_argument("--theme", choices=["Aurora Glass", "Cyber Neon", "OLED Dark", "Light Velvet"], default="Aurora Glass", help="Theme style")
-    parser.add_argument("--layout", choices=["QWERTY", "DEV/TERM", "NUMPAD"], default="QWERTY", help="Initial keyboard layout")
+    # NOTE: these default to None on purpose. A non-None argparse default is
+    # always truthy, so the `if args.theme` / `if args.layout` guards below
+    # would unconditionally overwrite the theme and layout restored from
+    # ~/.config/aurora-keyboard/config.json - the keyboard always came back
+    # up as Aurora Glass / QWERTY no matter what the user had chosen.
+    parser.add_argument("--theme", choices=["Aurora Glass", "Cyber Neon", "OLED Dark", "Light Velvet"], default=None, help="Theme style (default: last used)")
+    parser.add_argument("--layout", choices=["QWERTY", "DEV", "DEV/TERM", "NUM", "NUMPAD"], default=None, help="Initial keyboard layout (default: last used)")
     parser.add_argument("--badge-only", action="store_true", help="Start collapsed as a floating badge")
+    return parser
 
-    args = parser.parse_args()
+
+def main():
+    args = build_parser().parse_args()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Aurora Touch Keyboard")

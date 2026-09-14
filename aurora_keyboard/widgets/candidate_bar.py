@@ -68,7 +68,7 @@ class CandidateBar(QFrame):
 
         # Auto-commit top candidate immediately if enabled
         if self.auto_commit and top_word:
-            self.parent_window.engine.type_text(top_word + " ")
+            self.parent_window.commit_text(top_word + " ")
             self.last_inserted_word = top_word
 
         for i, word in enumerate(candidates[:5]):
@@ -99,10 +99,12 @@ class CandidateBar(QFrame):
             bs_code = self.parent_window.engine.get_keycode("BACKSPACE")
             for _ in range(backspaces):
                 self.parent_window.engine.send_keycode(bs_code)
-            self.parent_window.engine.type_text(word + " ")
+            self.parent_window.commit_text(word + " ")
+            self.parent_window.rolling_context.replace_last_word(word)
             self.clear_candidates()
         else:
-            self.parent_window.engine.type_text(word + " ")
+            self.parent_window.commit_text(word + " ")
+            self.parent_window.rolling_context.replace_last_word(word)
             self.clear_candidates()
 
     def clear_candidates(self):

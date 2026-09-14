@@ -2,6 +2,14 @@
 Integration tests for AuroraKeyboardWindow UI, widgets, and layout switching.
 """
 
+import os
+
+# Safety interlock: never open the real /dev/uinput device from a test.
+# These tests drive handle_key_click(), and without this the keystrokes land
+# in whatever window the user currently has focused on the live desktop.
+os.environ["AURORA_NO_UINPUT"] = "1"
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import sys
 import unittest
 from PyQt6.QtWidgets import QApplication
@@ -200,14 +208,25 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
         self.assertIsNotNone(mod_btn)
         self.assertFalse(mod_btn.autoRepeat())
 
-    def test_super_key_pulses_application_menu(self):
+    def test_super_key_pulses_application_menu_only_when_unused(self):
+        """A tapped Super latches first; the bare launcher press is deferred so
+        that Super+<key> works from a single tap."""
         from unittest.mock import patch
+        super_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('mod') == 'LEFTMETA'), None)
+        self.assertIsNotNone(super_btn)
+
         with patch.object(self.window.engine, "send_keycode") as mock_send:
-            super_btn = next((b for b in self.window.key_buttons if getattr(b, 'key_info', {}).get('mod') == 'LEFTMETA'), None)
-            self.assertIsNotNone(super_btn)
             self.window.handle_key_click(super_btn.key_info, super_btn)
-            # Verify send_keycode was called with LEFTMETA keycode (125)
+            # No immediate pulse - it must not leak into the next keystroke
+            mock_send.assert_not_called()
+            self.assertTrue(self.window._meta_pulse_timer.isActive())
+
+            # Nothing followed: the deferred pulse fires a bare LEFTMETA (125)
+            self.window._fire_meta_pulse()
             mock_send.assert_called_with(125)
+
+        # ...and the latch is gone afterwards
+        self.assertNotIn("LEFTMETA", self.window.get_active_modifiers())
 
     def test_minimize_and_restore(self):
         self.window.show()
@@ -240,6 +259,111 @@ class TestAuroraKeyboardWindow(unittest.TestCase):
         port_prof = self.window.geometry_mgr.profiles["portrait"]
         self.assertEqual(port_prof.pos, (50, 1100))
         self.assertEqual(port_prof.size, (960, 400))
+
+
+class TestModifierLeaksAndStartupPrefs(unittest.TestCase):
+    """Regressions for the two live bugs: Enter silently turning into a
+    modifier combo, and the saved skin being overwritten at startup."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not QApplication.instance():
+            cls.app = QApplication(sys.argv)
+        else:
+            cls.app = QApplication.instance()
+
+    def setUp(self):
+        from unittest.mock import MagicMock
+        self.window = AuroraKeyboardWindow()
+        self.window.engine = MagicMock()
+        self.window.engine.get_keycode.side_effect = lambda name: 125 if name == "LEFTMETA" else 28
+        # Never touch the real config or KWin from a test
+        self.window.geometry_mgr.save_config = MagicMock()
+        self.window.geometry_mgr.sync_kwin_rules = MagicMock()
+        self.enter = {"label": "Enter \u21b5", "type": "key", "keycode": "ENTER"}
+
+    def tearDown(self):
+        self.window.badge.hide()
+        self.window.hide()
+        self.window.deleteLater()
+
+    def _sent_combos(self):
+        return [c for c in self.window.engine.mock_calls if c[0] == "send_combo"]
+
+    def test_enter_alone_sends_a_plain_enter(self):
+        self.window.handle_key_click(self.enter, None)
+        self.assertEqual(self._sent_combos(), [])
+        self.window.engine.send_keycode.assert_called_once()
+
+    def test_super_tap_then_enter_is_a_combo_and_never_opens_launcher(self):
+        super_info = {"type": "toggle_modifier", "mod": "LEFTMETA"}
+        self.window.handle_key_click(super_info, None)
+        self.assertTrue(self.window._meta_pulse_timer.isActive())
+
+        self.window.handle_key_click(self.enter, None)
+        # Super+Enter was the user's intent, and the deferred launcher press
+        # must be cancelled rather than firing afterwards.
+        self.window.engine.send_combo.assert_called_once_with(["LEFTMETA"], "ENTER")
+        self.assertFalse(self.window._meta_pulse_timer.isActive())
+        self.assertEqual(self.window.get_active_modifiers(), [])
+
+    def test_swipe_commit_retires_latched_modifiers(self):
+        self.window.toggle_modifier("LEFTSHIFT")
+        self.assertTrue(self.window.shift_active)
+
+        self.window.candidate_bar.set_candidates(["hello"], "futo")
+
+        # Latched Shift must not survive the swipe and turn the next Enter
+        # into Shift+Enter (a newline, not a submit, in most apps).
+        self.assertFalse(self.window.shift_active)
+        self.window.engine.reset_mock()
+        self.window.handle_key_click(self.enter, None)
+        self.assertEqual(self._sent_combos(), [])
+
+    def test_locked_modifier_survives_a_swipe_commit(self):
+        self.window.toggle_modifier("LEFTCTRL")
+        self.window.toggle_modifier("LEFTCTRL")  # double tap -> locked
+        self.window.candidate_bar.set_candidates(["hello"], "futo")
+        self.assertEqual(self.window.get_active_modifiers(), ["LEFTCTRL"])
+
+    def test_candidate_chip_corrects_the_rolling_context(self):
+        self.window.rolling_context.push_word("instructor")
+        self.window.candidate_bar.auto_commit = False
+        self.window.candidate_bar.last_inserted_word = None
+        self.window.candidate_bar._on_chip_clicked("infrastructure", 2)
+        self.assertEqual(self.window.rolling_context.get_context(), ["infrastructure"])
+
+    def test_enter_does_not_auto_repeat_but_backspace_does(self):
+        by_code = {}
+        for btn in self.window.key_buttons:
+            code = getattr(btn, "key_info", {}).get("keycode")
+            if code:
+                by_code.setdefault(code, btn)
+        self.assertFalse(by_code["ENTER"].autoRepeat())
+        self.assertTrue(by_code["BACKSPACE"].autoRepeat())
+        self.assertTrue(by_code["LEFT"].autoRepeat())
+        char_btn = next(b for b in self.window.key_buttons if b.key_info.get("type") == "char")
+        self.assertTrue(char_btn.autoRepeat())
+
+    def test_cli_theme_and_layout_default_to_the_saved_preference(self):
+        from aurora_keyboard.main import build_parser
+        args = build_parser().parse_args([])
+        # A non-None default here is what silently forced Aurora Glass/QWERTY
+        # over the user's saved choice on every launch.
+        self.assertIsNone(args.theme)
+        self.assertIsNone(args.layout)
+
+    def test_theme_change_is_persisted(self):
+        self.window.apply_theme("OLED Dark")
+        self.assertTrue(self.window._save_timer.isActive())
+        self.window.save_config_and_sync()
+        self.assertEqual(self.window.geometry_mgr.current_theme, "OLED Dark")
+        self.window.geometry_mgr.save_config.assert_called()
+
+    def test_layout_change_syncs_the_toolbar_combo(self):
+        self.window.change_layout("NUMPAD")
+        self.assertEqual(self.window.layout_box.currentText(), "NUM")
+        self.assertEqual(self.window.current_layout_name, "NUMPAD")
 
 
 if __name__ == "__main__":

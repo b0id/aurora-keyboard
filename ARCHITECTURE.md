@@ -63,12 +63,24 @@ To support tablets that rotate between Landscape (wide) and Portrait (tall) aspe
 - Creates a virtual keyboard `/dev/input/eventX` via `evdev.UInput`.
 - Filters keycodes to `<= e.KEY_MAX` (767) to prevent kernel `EINVAL` (errno 22).
 - Composes multi-key chords (`send_combo`) by pressing modifiers in order and releasing them in reverse order.
+- **`AURORA_NO_UINPUT` safety interlock**: when this environment variable is set, no virtual device is created and every emit no-ops. The device is system-wide, so a keystroke emitted from a test lands in whatever window the user currently has focused. All test modules that construct `AuroraKeyboardWindow` or `KeyEngine` set it at import time.
+
+### 4.1 Modifier semantics (`keyboard_window.py`)
+
+Modifiers are tri-state: **OFF → LATCHED** (single tap, applies to the next keystroke) **→ LOCKED** (second tap within `DOUBLE_TAP_INTERVAL` = 400 ms) **→ OFF**. `consume_latched_modifiers()` retires latched modifiers after each keystroke; locked ones persist until tapped off or Esc clears everything.
+
+Two rules exist specifically to stop a modifier leaking into a later keystroke — the failure mode where Enter silently became Shift/Super+Enter and appeared not to work at all:
+
+- **Super defers its launcher press.** A tapped Super only latches; the bare `KEY_LEFTMETA` pulse that opens the desktop launcher is scheduled `META_PULSE_DELAY_MS` (600 ms) later and is cancelled by any following keystroke. So `Super+D` works from a *single* tap, and tapping Super alone still opens the launcher. Previously the tap pulsed *and* latched, leaving Meta armed over the next key.
+- **Swipe commits retire one-shot modifiers.** Swipe words and candidate chips go through `AuroraKeyboardWindow.commit_text()`, not `engine.type_text()` directly, so a latched modifier can't survive a whole swiped sentence.
+
+Auto-repeat on hold is limited to `AUTO_REPEAT_KEYCODES` (backspace, delete, space, tab, arrows, home/end/page) plus character keys — never Enter, the F-keys or Insert.
 
 ## 5. UI Widgets & Interactions
 
 - **`DragHandleLabel`**: Calls `windowHandle().startSystemMove()` for native Wayland compositor window repositioning.
 - **`TouchResizeGrip`**: Calls `windowHandle().startSystemResize(RightEdge | BottomEdge)` for touch finger resizing.
-- **`CandidateBar`**: Displays top predictions with immediate auto-commit on top chip and replacement on secondary clicks.
+- **`CandidateBar`**: Displays top predictions with immediate auto-commit on top chip and replacement on secondary clicks. Commits route through `AuroraKeyboardWindow.commit_text()` (§4.1) and update `RollingTokenContext` via `replace_last_word()` so a chip correction also corrects the context fed to the context LM.
 - **`SwipeTrailOverlay`**: Transparent 60fps overlay rendering layered glowing stroke paths.
 - **`FloatingBadge`**: 160×160 touch icon with drop shadow staying anchored in screen corner.
 
@@ -76,3 +88,4 @@ To support tablets that rotate between Landscape (wide) and Portrait (tall) aspe
 
 - `install.sh`: Creates desktop launcher and autostart entry with `--badge-only` to launch minimized.
 - `main.py`: Single-instance guard using `QLocalServer` prevents duplicate processes.
+- **Preference restore**: theme and layout live in `~/.config/aurora-keyboard/config.json` and are applied in `AuroraKeyboardWindow.__init__`. `--theme`/`--layout` default to `None` so that an unspecified flag leaves the saved preference alone; a non-`None` argparse default is always truthy and silently overrode it on every launch. Changing either from the toolbar schedules a debounced write (`_persist_prefs`), so the choice survives a crash rather than only a clean exit.
