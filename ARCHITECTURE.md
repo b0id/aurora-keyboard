@@ -83,6 +83,7 @@ Auto-repeat on hold is limited to `AUTO_REPEAT_KEYCODES` (backspace, delete, spa
 - **`CandidateBar`**: Displays top predictions with immediate auto-commit on top chip and replacement on secondary clicks. Commits route through `AuroraKeyboardWindow.commit_text()` (§4.1) and update `RollingTokenContext` via `replace_last_word()` so a chip correction also corrects the context fed to the context LM.
 - **`SwipeTrailOverlay`**: Transparent 60fps overlay rendering layered glowing stroke paths.
 - **`FloatingBadge`**: 160×160 touch icon with drop shadow staying anchored in screen corner.
+- **Toolbar density tiers** (`TOOLBAR_TIERS`, `_update_toolbar_density`): the action bar sheds its widest controls as the window narrows, so a one-hand-width keyboard is not dominated by its own header. Drag handle, drag lock, resize grip, −/+, minimize and close are always present; layout and theme pickers appear at ≥560px; dock, Set Default and the scale-preset combo at ≥900px; the size-mode combo only at ≥1200px, since "Remember" is the default and rarely changed. Controls are hidden, never removed — widening brings them back. The scale-preset combo is tiered out early because it is the widest control in the bar and the −/+ buttons already cover scaling.
 
 ## 6. Deployment & Autostart
 

@@ -360,6 +360,44 @@ class TestModifierLeaksAndStartupPrefs(unittest.TestCase):
         self.assertEqual(self.window.geometry_mgr.current_theme, "OLED Dark")
         self.window.geometry_mgr.save_config.assert_called()
 
+    def test_toolbar_sheds_widest_controls_first_as_it_narrows(self):
+        """At a one-hand width the scale-preset and size-mode combos must give
+        up their space; layout/theme stay. Nothing is removed - widening the
+        keyboard brings every control back."""
+        def state(width):
+            self.window._update_toolbar_density(width)
+            return {
+                "layout": not self.window.layout_box.isHidden(),
+                "theme": not self.window.theme_box.isHidden(),
+                "dock": not self.window.dock_btn.isHidden(),
+                "set_default": not self.window.lock_preset_btn.isHidden(),
+                "scale": not self.window.scale_preset_box.isHidden(),
+                "size_mode": not self.window.size_mode_box.isHidden(),
+            }
+
+        mini = state(400)
+        self.assertFalse(mini["layout"])
+        self.assertFalse(mini["scale"])
+        self.assertFalse(mini["size_mode"])
+
+        # The real one-hand width in use on the tablet.
+        one_hand = state(582)
+        self.assertTrue(one_hand["layout"], "layout picker is wanted at one-hand width")
+        self.assertTrue(one_hand["theme"])
+        self.assertFalse(one_hand["scale"], "scale combo is the widest control - first to go")
+        self.assertFalse(one_hand["size_mode"], "'Remember' is the default; not worth the room")
+        self.assertFalse(one_hand["dock"])
+
+        wide = state(1094)   # 75% preset
+        self.assertTrue(wide["scale"])
+        self.assertTrue(wide["dock"])
+        self.assertTrue(wide["set_default"])
+        self.assertFalse(wide["size_mode"])
+
+        full = state(1459)   # 100% preset
+        self.assertTrue(full["size_mode"])
+        self.assertTrue(all(full.values()), "everything returns at full width")
+
     def test_layout_change_syncs_the_toolbar_combo(self):
         self.window.change_layout("NUMPAD")
         self.assertEqual(self.window.layout_box.currentText(), "NUM")

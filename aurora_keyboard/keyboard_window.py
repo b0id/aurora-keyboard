@@ -94,8 +94,25 @@ def create_padlock_icon(locked: bool, color: QColor, size: int = 24) -> QIcon:
 class AuroraKeyboardWindow(QWidget):
     """Main Frameless On-Screen Keyboard Window."""
 
-    # Toolbar density threshold: below this width, hide non-essential action buttons
-    TOOLBAR_DENSITY_THRESHOLD = 580
+    # Toolbar density tiers: the minimum window width (logical px) at which
+    # each control earns its space. Below its tier a control is hidden, never
+    # removed - widening the keyboard brings it straight back.
+    #
+    # Always visible: drag handle, drag lock, resize grip, the -/+ zoom
+    # buttons, minimize and close.
+    TOOLBAR_TIERS = {
+        # Layout and theme pickers - wanted even on a one-hand-width keyboard.
+        "standard": 560,
+        # Dock, Set Default, and the scale-preset combo. The preset combo is
+        # the widest control in the bar and is redundant while the -/+ buttons
+        # are still there, so it is the first thing to give up its space.
+        "wide": 900,
+        # Size-mode combo. "Remember" is the default and rarely changed, so it
+        # is only worth the room on a full-width keyboard.
+        "full": 1200,
+    }
+    # Kept as the standard-tier alias for anything still referencing it.
+    TOOLBAR_DENSITY_THRESHOLD = 560
     DOUBLE_TAP_INTERVAL = 0.40  # 400ms double-tap lock window
     # How long a tapped Super waits for a companion key before it is treated
     # as a bare Super press (open the desktop launcher). See _schedule_meta_pulse.
@@ -554,14 +571,27 @@ class AuroraKeyboardWindow(QWidget):
                 btn.setStyleSheet(style)
                 btn.setFixedHeight(min_h_px)
 
-    def _update_toolbar_density(self):
-        if not all(hasattr(self, attr) for attr in ('dock_btn', 'layout_box', 'theme_box', 'lock_preset_btn')):
+    def _update_toolbar_density(self, width: int | None = None):
+        """`width` is injectable so the tiers can be tested at sizes larger
+        than the headless test screen allows."""
+        managed = ('dock_btn', 'layout_box', 'theme_box', 'lock_preset_btn',
+                   'scale_preset_box', 'size_mode_box')
+        if not all(hasattr(self, attr) for attr in managed):
             return
-        roomy = self.width() >= self.TOOLBAR_DENSITY_THRESHOLD
-        self.dock_btn.setVisible(roomy)
-        self.layout_box.setVisible(roomy)
-        self.theme_box.setVisible(roomy)
-        self.lock_preset_btn.setVisible(roomy)
+
+        width = self.width() if width is None else width
+        standard = width >= self.TOOLBAR_TIERS["standard"]
+        wide = width >= self.TOOLBAR_TIERS["wide"]
+        full = width >= self.TOOLBAR_TIERS["full"]
+
+        self.layout_box.setVisible(standard)
+        self.theme_box.setVisible(standard)
+
+        self.dock_btn.setVisible(wide)
+        self.lock_preset_btn.setVisible(wide)
+        self.scale_preset_box.setVisible(wide)
+
+        self.size_mode_box.setVisible(full)
 
     def _sync_scale_preset_label(self):
         screen = QApplication.primaryScreen()
