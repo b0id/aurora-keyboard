@@ -380,6 +380,7 @@ class TestModifierLeaksAndStartupPrefs(unittest.TestCase):
         self.assertFalse(mini["scale"])
         self.assertFalse(mini["size_mode"])
         self.assertTrue(mini["set_default"], "Set Default stays at every width")
+        self.assertTrue(mini["theme"], "skin picker stays at every width")
 
         # The real one-hand width in use on the tablet.
         one_hand = state(582)

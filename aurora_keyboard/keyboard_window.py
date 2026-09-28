@@ -99,10 +99,11 @@ class AuroraKeyboardWindow(QWidget):
     # removed - widening the keyboard brings it straight back.
     #
     # Always visible: drag handle, drag lock, resize grip, the -/+ zoom
-    # buttons, Set Default, minimize and close. Set Default is how a placement
-    # gets committed after positioning by hand, so it stays at every width.
+    # buttons, Set Default, the skin (theme) picker, minimize and close.
+    # Set Default is how a placement gets committed after positioning by hand,
+    # and the skin picker is wanted at every size - both stay at any width.
     TOOLBAR_TIERS = {
-        # Layout and theme pickers - wanted even on a one-hand-width keyboard.
+        # Layout picker - wanted on a one-hand-width keyboard, dropped on mini.
         "standard": 560,
         # Dock and the scale-preset combo. The preset combo is the widest
         # control in the bar and is redundant while the -/+ buttons are still
@@ -586,11 +587,11 @@ class AuroraKeyboardWindow(QWidget):
         full = width >= self.TOOLBAR_TIERS["full"]
 
         self.layout_box.setVisible(standard)
-        self.theme_box.setVisible(standard)
 
-        # Set Default is never tiered out - it is the control that commits a
-        # hand-positioned placement, and is wanted at one-hand width.
+        # Never tiered out: Set Default commits a hand-positioned placement,
+        # and the skin picker is wanted at every width.
         self.lock_preset_btn.setVisible(True)
+        self.theme_box.setVisible(True)
 
         self.dock_btn.setVisible(wide)
         self.scale_preset_box.setVisible(wide)
