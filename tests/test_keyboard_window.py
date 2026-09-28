@@ -379,6 +379,7 @@ class TestModifierLeaksAndStartupPrefs(unittest.TestCase):
         self.assertFalse(mini["layout"])
         self.assertFalse(mini["scale"])
         self.assertFalse(mini["size_mode"])
+        self.assertTrue(mini["set_default"], "Set Default stays at every width")
 
         # The real one-hand width in use on the tablet.
         one_hand = state(582)
@@ -387,6 +388,7 @@ class TestModifierLeaksAndStartupPrefs(unittest.TestCase):
         self.assertFalse(one_hand["scale"], "scale combo is the widest control - first to go")
         self.assertFalse(one_hand["size_mode"], "'Remember' is the default; not worth the room")
         self.assertFalse(one_hand["dock"])
+        self.assertTrue(one_hand["set_default"], "Set Default is explicitly kept at one-hand width")
 
         wide = state(1094)   # 75% preset
         self.assertTrue(wide["scale"])
